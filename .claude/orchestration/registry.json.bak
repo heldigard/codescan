@@ -1,0 +1,62 @@
+{
+  "agents": {
+    "main": {
+      "last_seen": 1783217971.324605,
+      "leased_paths": [
+        "/home/eldi/codescan/.memory-bank/MEMORY.md",
+        "/home/eldi/codescan/.memory-bank/CONTEXT.md",
+        "/home/eldi/codescan/.memory-bank/REFERENCE.md",
+        "/home/eldi/codescan/.memory-bank/progress.md",
+        "/home/eldi/codescan/.memory-bank/systemPatterns.md"
+      ],
+      "model": "unknown",
+      "started_at": 1783217957.5642283,
+      "status": "active",
+      "task": ""
+    }
+  },
+  "leases": {
+    "0be1321a-789": {
+      "acquired_at": 1783217965.0345933,
+      "expires_at": 1783218565.0345933,
+      "holder": "main",
+      "lease_id": "0be1321a-789",
+      "mode": "exclusive",
+      "path": "/home/eldi/codescan/.memory-bank/REFERENCE.md"
+    },
+    "0fdbc4c3-7c3": {
+      "acquired_at": 1783217971.324605,
+      "expires_at": 1783218571.324605,
+      "holder": "main",
+      "lease_id": "0fdbc4c3-7c3",
+      "mode": "exclusive",
+      "path": "/home/eldi/codescan/.memory-bank/systemPatterns.md"
+    },
+    "21cd19c7-a36": {
+      "acquired_at": 1783217968.1531277,
+      "expires_at": 1783218568.1531277,
+      "holder": "main",
+      "lease_id": "21cd19c7-a36",
+      "mode": "exclusive",
+      "path": "/home/eldi/codescan/.memory-bank/progress.md"
+    },
+    "53de7111-f2e": {
+      "acquired_at": 1783217960.9940264,
+      "expires_at": 1783218560.9940264,
+      "holder": "main",
+      "lease_id": "53de7111-f2e",
+      "mode": "exclusive",
+      "path": "/home/eldi/codescan/.memory-bank/CONTEXT.md"
+    },
+    "99759055-b65": {
+      "acquired_at": 1783217957.5642283,
+      "expires_at": 1783218557.5642283,
+      "holder": "main",
+      "lease_id": "99759055-b65",
+      "mode": "exclusive",
+      "path": "/home/eldi/codescan/.memory-bank/MEMORY.md"
+    }
+  },
+  "started_at": 1783217957.564227,
+  "version": 2
+}
