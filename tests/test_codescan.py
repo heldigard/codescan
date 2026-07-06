@@ -104,6 +104,18 @@ def test_codescan_dead_ignores_pep562_module_hooks(tmp_path: Path) -> None:
     assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
 
 
+def test_codescan_dead_single_file(tmp_path: Path) -> None:
+    """codescan dead must correctly detect languages and run on a single file path."""
+    app_file = tmp_path / "app.py"
+    app_file.write_text(
+        "def ordinary_dead_func():\n    return 2\n"
+    )
+    r = run(["codescan", "dead", "-p", str(app_file)], check=False)
+    assert r.returncode == 0, f"dead on single file failed: stdout={r.stdout} stderr={r.stderr}"
+    assert "ordinary_dead_func" in r.stdout, f"expected vulture finding: {r.stdout}"
+
+
+
 def test_codescan_arch_skips_without_config(tmp_path: Path) -> None:
     """dependency-cruiser must SKIP cleanly (exit 1, not crash) when the project
     has no .dependency-cruiser.cjs — never auto-generate one."""

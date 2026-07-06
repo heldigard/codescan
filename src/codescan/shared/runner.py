@@ -110,7 +110,20 @@ def _has_py_markers(p: Path) -> bool:
 def detect_langs(path: Path) -> set[str]:
     """Heuristic: which language ecosystems are present under path (depth 2)."""
     langs: set[str] = set()
-    candidates = [path, *path.iterdir()] if path.is_dir() else [path]
+    if not path.exists():
+        return langs
+    if not path.is_dir():
+        if path.suffix == ".py":
+            langs.add("py")
+        elif path.suffix in (".js", ".ts", ".jsx", ".tsx"):
+            langs.add("js")
+        return langs
+
+    try:
+        candidates = [path, *path.iterdir()]
+    except OSError:
+        candidates = [path]
+
     for p in candidates:
         if not p.is_dir():
             continue
@@ -119,3 +132,4 @@ def detect_langs(path: Path) -> set[str]:
         if _has_py_markers(p):
             langs.add("py")
     return langs
+
