@@ -1,10 +1,25 @@
 """Shared utilities: subprocess helpers, tool detection, language detection."""
+
 from __future__ import annotations
 
 import shutil
 import subprocess
 import sys
+from os import environ
 from pathlib import Path
+
+DEFAULT_BIN_TIMEOUT = 180.0
+
+
+def _env_timeout() -> float:
+    """Read the sensor timeout from env, falling back on bad values."""
+    raw = environ.get("CODESCAN_BIN_TIMEOUT")
+    if raw is None:
+        return DEFAULT_BIN_TIMEOUT
+    try:
+        return float(raw)
+    except ValueError:
+        return DEFAULT_BIN_TIMEOUT
 
 
 def die(msg: str, code: int = 2) -> None:
@@ -13,10 +28,45 @@ def die(msg: str, code: int = 2) -> None:
     sys.exit(code)
 
 
-def run(cmd: list[str]) -> tuple[int, str, str]:
-    """Run a command, return (returncode, stdout, stderr)."""
-    p = subprocess.run(cmd, capture_output=True, text=True)
+def run(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float | None = None,
+) -> tuple[int, str, str]:
+    """Run a command, return (returncode, stdout, stderr).
+
+    On timeout, returns rc=-1 with a stderr message rather than dying: each
+    sensor already handles rc != 0, so this degrades gracefully (the sensor
+    reports the timeout and the orchestrator continues with the next one)."""
+    timeout = _env_timeout() if timeout is None else timeout
+    try:
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        tool = cmd[0] if cmd else "command"
+        out = exc.stdout or ""
+        err = exc.stderr or ""
+        note = f"{tool} timed out after {int(timeout)}s (set CODESCAN_BIN_TIMEOUT to raise it)"
+        if err:
+            err = f"{err.rstrip()}\n{note}"
+        else:
+            err = note
+        return (
+            -1,
+            out,
+            err,
+        )
     return p.returncode, p.stdout, p.stderr
+
+
+def print_topn(items: list[str], *, max_items: int = 40) -> None:
+    """Print up to `max_items` pre-formatted lines (indented two spaces), then
+    a `... N more` truncator. Shared by every sensor so the truncation shape is
+    identical across dead / sec / secrets / arch output."""
+    for line in items[:max_items]:
+        print(f"  {line}")
+    if len(items) > max_items:
+        print(f"  ... {len(items) - max_items} more")
 
 
 def have(tool: str) -> bool:
@@ -34,16 +84,27 @@ def version_of(tool: str) -> str:
         "dependency-cruiser": ["--version"],
     }.get(tool, ["--version"])
     try:
-        _, out, _ = run([tool] + flags)
+        _, out, _ = run([tool] + flags, timeout=10)
         return (out or "?").strip().splitlines()[0][:40]
     except Exception:
         return "?"
 
 
+def find_upward(path: Path, marker: str) -> Path | None:
+    """Find nearest ancestor containing marker, starting at path."""
+    start = path if path.is_dir() else path.parent
+    start = start.expanduser().resolve()
+    for candidate in (start, *start.parents):
+        if (candidate / marker).exists():
+            return candidate
+    return None
+
+
 def _has_py_markers(p: Path) -> bool:
     """Check if a directory looks like a Python project."""
-    return (p / "pyproject.toml").exists() or (p / "requirements.txt").exists() \
-        or any(p.glob("*.py"))
+    return (
+        (p / "pyproject.toml").exists() or (p / "requirements.txt").exists() or any(p.glob("*.py"))
+    )
 
 
 def detect_langs(path: Path) -> set[str]:

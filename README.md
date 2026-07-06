@@ -31,6 +31,10 @@ codescan arch -p src/                  # architecture rules (needs .dependency-c
 codescan all -p src/                   # run every sensor, summarize
 ```
 
+`codescan dead` passes the nearest `pyproject.toml` to Vulture when present,
+merges project `tool.vulture` ignores with vendor excludes, and suppresses
+PEP 562 module hooks (`__getattr__`, `__dir__`) by default.
+
 ## External tools
 
 codescan delegates — it does NOT bundle the analysis tools. Install what you need:

@@ -33,17 +33,18 @@ def cmd_all(args: argparse.Namespace) -> int:
     from codescan.sensors.depcruiser_sensor import cmd_arch
     from codescan.sensors.gitleaks_sensor import cmd_secrets
     from codescan.sensors.semgrep_sensor import cmd_sec
+    from codescan.shared.runner import detect_langs
 
     path = Path(args.path)
     print(f"#### codescan all on {path} ####\n")
     _run_sensor(cmd_secrets, args, "secrets")
     _run_sensor(cmd_sec, args, "SAST")
-    _run_dead_sensors(path, {"py", "js"}, getattr(args, "min_confidence", 60))
+    _run_dead_sensors(path, detect_langs(path), args.min_confidence)
     _run_sensor(cmd_arch, args, "arch")
     return 0
 
 
-def _run_dead_sensors(path: Path, langs: set[str], min_confidence: int) -> int:
+def _run_dead_sensors(path: Path, langs: set[str], min_confidence: int | None) -> int:
     """Dispatch dead-code sensors for detected languages."""
     from codescan.sensors.knip_sensor import cmd_dead_js
     from codescan.sensors.vulture_sensor import cmd_dead_py
@@ -56,8 +57,10 @@ def _run_dead_sensors(path: Path, langs: set[str], min_confidence: int) -> int:
         ran = True
         cmd_dead_js(path)
     if not ran:
-        print(f"no Python/JS/TS project detected under {path} "
-              f"(pass -l py|js|ts to force)", file=sys.stderr)
+        print(
+            f"no Python/JS/TS project detected under {path} (pass -l py|js|ts to force)",
+            file=sys.stderr,
+        )
         return 1
     return 0
 
@@ -100,8 +103,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="force language (default: auto-detect)",
     )
     dead_parser.add_argument(
-        "--min-confidence", type=int, default=60,
-        help="vulture min confidence (default 60; 80 = only high)",
+        "--min-confidence", type=int, default=None,
+        help="vulture min confidence (default: tool.vulture config, else 60)",
     )
     dead_parser.set_defaults(func=_cmd_dead)
 
@@ -126,6 +129,16 @@ def _build_parser() -> argparse.ArgumentParser:
     # all
     all_parser = sub.add_parser("all", help="run every applicable sensor")
     _add_path(all_parser)
+    all_parser.add_argument("-c", "--config", default=None, help="semgrep config (default: auto)")
+    all_parser.add_argument("--summary-only", action="store_true", help="semgrep counts only")
+    all_parser.add_argument(
+        "--min-confidence", type=int, default=None,
+        help="vulture min confidence (default: tool.vulture config, else 60)",
+    )
+    all_parser.add_argument(
+        "--arch-target", dest="target", default="src",
+        help="dependency-cruiser entry to cruise (default: src)",
+    )
     all_parser.set_defaults(func=cmd_all)
 
     return ap
