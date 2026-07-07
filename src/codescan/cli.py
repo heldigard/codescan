@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
+from codescan.capabilities import capabilities_payload
 from codescan.shared.config import SENSORS
 from codescan.shared.runner import have, version_of
 
@@ -16,6 +18,12 @@ def cmd_list(_args: argparse.Namespace) -> int:
     for tool in SENSORS:
         avail = "yes" if have(tool) else "NO (install)"
         print(f"{tool:<20} {version_of(tool):<22} {avail}")
+    return 0
+
+
+def cmd_capabilities(_args: argparse.Namespace) -> int:
+    """Emit sensor capability metadata for orchestrators."""
+    print(json.dumps(capabilities_payload(), indent=2, ensure_ascii=False))
     return 0
 
 
@@ -94,6 +102,12 @@ def _build_parser() -> argparse.ArgumentParser:
     # list
     list_parser = sub.add_parser("list", help="show available sensors + versions")
     list_parser.set_defaults(func=cmd_list)
+
+    capabilities_parser = sub.add_parser(
+        "capabilities",
+        help="emit machine-readable sensor capability metadata",
+    )
+    capabilities_parser.set_defaults(func=cmd_capabilities)
 
     # dead
     dead_parser = sub.add_parser("dead", help="dead code (vulture py / knip ts,js)")

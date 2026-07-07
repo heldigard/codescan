@@ -12,6 +12,7 @@ best-in-class tools and prints normalized, token-friendly summaries.
 | `secrets` | gitleaks | Leaked keys/tokens in working tree |
 | `arch` | dependency-cruiser | Import-rule violations (layering, circular) |
 | `all` | (runs all above) | Sequential, CPU-safe |
+| `capabilities` | built-in | Machine-readable sensor metadata for routers/workers |
 
 ## Install
 
@@ -24,6 +25,7 @@ codescan list           # verify sensors
 
 ```bash
 codescan list                          # show available sensors + versions
+codescan capabilities                  # JSON metadata: safety, cost, external tools
 codescan dead -p src/                  # dead code detection
 codescan sec -p src/                   # SAST scan
 codescan secrets -p src/               # secret leak scan
@@ -34,6 +36,12 @@ codescan all -p src/                   # run every sensor, summarize
 `codescan dead` passes the nearest `pyproject.toml` to Vulture when present,
 merges project `tool.vulture` ignores with vendor excludes, and suppresses
 PEP 562 module hooks (`__getattr__`, `__dir__`) by default.
+
+`codescan capabilities` is the integration contract for controllers, routers,
+and workers. It reports `schema_version`, available sensor names, safety hints
+(`read_only`, `destructive`, `idempotent`, `open_world`), required external
+tools, and rough cost so the big model can choose the narrowest useful quality
+sensor without memorizing CLI details.
 
 ## External tools
 

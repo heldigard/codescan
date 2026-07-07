@@ -4,10 +4,30 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+import tempfile
 from pathlib import Path
 
+from codescan.shared.config import VENDOR_EXCLUDES
 from codescan.shared.runner import die, have, print_topn, run
+
+
+def _gitleaks_allowlist_config() -> str:
+    escaped = [re.escape(item) for item in VENDOR_EXCLUDES]
+    path_pattern = rf"(^|/)({'|'.join(escaped)})(/|$)"
+    return "\n".join(
+        [
+            "[extend]",
+            "useDefault = true",
+            "",
+            "[allowlist]",
+            "paths = [",
+            f"  '''{path_pattern}''',",
+            "]",
+            "",
+        ]
+    )
 
 
 def cmd_secrets(args: argparse.Namespace) -> int:
@@ -15,21 +35,36 @@ def cmd_secrets(args: argparse.Namespace) -> int:
     if not have("gitleaks"):
         die("gitleaks not installed", 2)
     path = str(Path(args.path))
-    rc, out, err = run(
-        [
-            "gitleaks",
-            "detect",
-            "--no-git",
-            "--source",
-            path,
-            "--report-format",
-            "json",
-            "--report-path",
-            "-",
-            "--no-banner",
-            "--redact",
-        ]
-    )
+    config_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".toml", delete=False
+        ) as config:
+            config.write(_gitleaks_allowlist_config())
+            config_path = config.name
+        rc, out, err = run(
+            [
+                "gitleaks",
+                "detect",
+                "--no-git",
+                "--source",
+                path,
+                "--config",
+                config_path,
+                "--report-format",
+                "json",
+                "--report-path",
+                "-",
+                "--no-banner",
+                "--redact",
+            ]
+        )
+    finally:
+        if config_path:
+            try:
+                Path(config_path).unlink()
+            except OSError:
+                pass
     findings: list = []
     if out.strip():
         try:

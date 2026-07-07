@@ -11,10 +11,14 @@ Safe anywhere; does not mutate the current project.
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+import pytest
 
 
 def run(
@@ -37,6 +41,21 @@ def test_codescan_list() -> None:
     assert "semgrep" in r.stdout, f"codescan list missing semgrep: {r.stdout}"
     assert "vulture" in r.stdout, f"codescan list missing vulture: {r.stdout}"
     assert "available" in r.stdout, f"codescan list malformed: {r.stdout}"
+
+
+def test_codescan_capabilities_contract() -> None:
+    r = run(["codescan", "capabilities"])
+    payload = json.loads(r.stdout)
+    assert payload["command"] == "capabilities"
+    assert payload["schema_version"] == 1
+    capabilities = payload["capabilities"]
+    by_name = {item["name"]: item for item in capabilities}
+    for name in ("dead", "sec", "secrets", "arch", "all", "capabilities"):
+        assert name in by_name
+        assert by_name[name]["read_only"] is True
+        assert by_name[name]["destructive"] is False
+    assert by_name["capabilities"]["structured_json"] is True
+    assert by_name["all"]["open_world"] is True
 
 
 def test_all_parser_has_sensor_options() -> None:
@@ -114,6 +133,21 @@ def test_codescan_dead_single_file(tmp_path: Path) -> None:
     assert r.returncode == 0, f"dead on single file failed: stdout={r.stdout} stderr={r.stderr}"
     assert "ordinary_dead_func" in r.stdout, f"expected vulture finding: {r.stdout}"
 
+
+
+def test_codescan_secrets_excludes_cache_dirs(tmp_path: Path) -> None:
+    """gitleaks must ignore generated caches such as pytest-created .pyc files."""
+    if not shutil.which("gitleaks"):
+        pytest.skip("gitleaks not installed")
+    cache = tmp_path / "__pycache__"
+    cache.mkdir()
+    (cache / "fixture.pyc").write_bytes(b"binary ghp_" + b"0" * 36)
+
+    r = run(["codescan", "secrets", "-p", str(tmp_path)], check=False)
+
+    assert r.returncode == 0, f"secrets failed: stdout={r.stdout} stderr={r.stderr}"
+    assert "leaks: 0" in r.stdout, r.stdout
+    assert "__pycache__" not in r.stdout, r.stdout
 
 
 def test_codescan_arch_skips_without_config(tmp_path: Path) -> None:
