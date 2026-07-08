@@ -180,6 +180,40 @@ def test_codescan_dead_ignores_parser_callbacks(tmp_path: Path) -> None:
     assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
 
 
+def test_codescan_dead_ignores_asyncio_protocol_callbacks(tmp_path: Path) -> None:
+    """asyncio.Protocol/StreamingProtocol overrides are invoked by the loop by name.
+
+    Same AST-local blind spot as HTMLParser: the event loop dispatches to
+    connection_made/data_received/connection_lost by reflection, so vulture
+    reports them (and their signature params) as dead. Regression: callbacks
+    and their params must NOT be reported; real dead code still is.
+    """
+    (tmp_path / "app.py").write_text(
+        "import asyncio\n"
+        "\n"
+        "class P(asyncio.Protocol):\n"
+        "    def connection_made(self, transport):\n"
+        "        pass\n"
+        "    def data_received(self, data):\n"
+        "        pass\n"
+        "    def connection_lost(self, exc):\n"
+        "        pass\n"
+        "\n"
+        "def ordinary_dead_func():\n"
+        "    return 2\n"
+    )
+
+    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py"], check=False)
+    assert r.returncode == 0, f"dead failed: stdout={r.stdout} stderr={r.stderr}"
+    assert "connection_made" not in r.stdout, f"asyncio callback flagged dead (FP): {r.stdout}"
+    assert "data_received" not in r.stdout, f"asyncio callback flagged dead (FP): {r.stdout}"
+    assert "connection_lost" not in r.stdout, f"asyncio callback flagged dead (FP): {r.stdout}"
+    assert "unused variable 'transport'" not in r.stdout, (
+        f"asyncio callback arg flagged dead (FP): {r.stdout}"
+    )
+    assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
+
+
 def test_codescan_dead_single_file(tmp_path: Path) -> None:
     """codescan dead must correctly detect languages and run on a single file path."""
     app_file = tmp_path / "app.py"

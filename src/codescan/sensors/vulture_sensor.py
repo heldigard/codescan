@@ -13,14 +13,14 @@ from codescan.shared.runner import find_upward, have, print_topn, run
 _DEFAULT_MIN_CONFIDENCE = 60
 _DEFAULT_IGNORE_NAMES = ["__getattr__", "__dir__"]
 # Override callbacks invoked by the framework by reflection, not by AST call.
-# vulture is AST-local: it sees the def but not that HTMLParser().feed() and
-# SAX ContentHandler dispatch to these by name, so it reports them as dead —
-# the single largest source of vulture false-positives in real codebases.
+# vulture is AST-local: it sees the def but not that HTMLParser().feed(), SAX
+# ContentHandler, or the asyncio event loop dispatch to these by name, so it
+# reports them as dead — the single largest source of vulture false-positives.
 # Only specific override names (never bare generics like `run`/`handle`/
 # `setup`, which would mask genuinely-dead code). Standard protocol dunders
 # (__str__/__len__/__init__) and unittest lifecycle (setUp/tearDown) are
 # already ignored by vulture itself and intentionally NOT duplicated here.
-_PARSER_CALLBACK_NAMES = [
+_FRAMEWORK_CALLBACK_NAMES = [
     # html.parser.HTMLParser overrides
     "handle_starttag",
     "handle_endtag",
@@ -45,6 +45,16 @@ _PARSER_CALLBACK_NAMES = [
     "ignorableWhitespace",
     "processingInstruction",
     "skippedEntity",
+    # asyncio.Protocol / DatagramProtocol / StreamingProtocol overrides
+    # (the event loop calls these by name)
+    "connection_made",
+    "connection_lost",
+    "data_received",
+    "datagram_received",
+    "eof_received",
+    "pause_writing",
+    "resume_writing",
+    "connection_failed",
 ]
 # Tokens that collide with OS-standard absolute paths (/tmp, /var/tmp) which
 # vulture resolves to. Segment-anchoring cannot rescue these: */tmp/* matches
@@ -100,10 +110,10 @@ def _vulture_excludes(settings: dict) -> list[str]:
 def _vulture_ignore_names(settings: dict) -> list[str]:
     """Names vulture suppresses itself via --ignore-names (hooks + project).
 
-    Parser/ContentHandler callbacks are intentionally NOT here: vulture would
-    then suppress the method, but the method's def line is what lets the
-    post-filter pair it with its unused signature params. Callbacks are
-    suppressed in the post-filter instead, where the def line stays visible.
+    Framework override callbacks (HTMLParser/SAX/asyncio) are intentionally NOT
+    here: vulture would then suppress the method, but the method's def line is
+    what lets the post-filter pair it with its unused signature params. Callbacks
+    are suppressed in the post-filter instead, where the def line stays visible.
     """
     ignore_names = [*_DEFAULT_IGNORE_NAMES]
     project_ignore_names = settings.get("ignore_names", [])
@@ -182,7 +192,7 @@ def _vulture_command(
     command.extend(["--ignore-names", ",".join(_vulture_ignore_names(settings))])
     # Callbacks are post-filtered (not via --ignore-names) so their def line
     # stays visible to dominate their signature params.
-    return command, effective_confidence, list(_PARSER_CALLBACK_NAMES)
+    return command, effective_confidence, list(_FRAMEWORK_CALLBACK_NAMES)
 
 
 def cmd_dead_py(path: Path, min_confidence: int | None) -> int:
