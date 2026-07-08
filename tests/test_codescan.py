@@ -141,6 +141,39 @@ def test_codescan_dead_ignores_pep562_module_hooks(tmp_path: Path) -> None:
     assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
 
 
+def test_codescan_dead_ignores_parser_callbacks(tmp_path: Path) -> None:
+    """HTMLParser/SAX override callbacks are invoked by the framework by name.
+
+    vulture is AST-local: it sees the def but not that HTMLParser().feed()
+    dispatches to handle_starttag/handle_data by reflection. The same applies
+    to SAX ContentHandler overrides (startElement/characters). These are the
+    single largest source of vulture false-positives in real codebases.
+    Regression: callbacks must NOT be reported dead; real dead code still is.
+
+    Note: __str__/setUp/__init__ are NOT tested here — vulture already ignores
+    the standard protocol dunders and unittest lifecycle internally; only the
+    parser/ContentHandler callbacks are missed and thus merit ignore-names.
+    """
+    (tmp_path / "app.py").write_text(
+        "from html.parser import HTMLParser\n"
+        "\n"
+        "class P(HTMLParser):\n"
+        "    def handle_starttag(self, tag, attrs):\n"
+        "        pass\n"
+        "    def handle_data(self, data):\n"
+        "        pass\n"
+        "\n"
+        "def ordinary_dead_func():\n"
+        "    return 2\n"
+    )
+
+    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py"], check=False)
+    assert r.returncode == 0, f"dead failed: stdout={r.stdout} stderr={r.stderr}"
+    assert "handle_starttag" not in r.stdout, f"HTMLParser callback flagged dead (FP): {r.stdout}"
+    assert "handle_data" not in r.stdout, f"HTMLParser callback flagged dead (FP): {r.stdout}"
+    assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
+
+
 def test_codescan_dead_single_file(tmp_path: Path) -> None:
     """codescan dead must correctly detect languages and run on a single file path."""
     app_file = tmp_path / "app.py"

@@ -11,6 +11,40 @@ from codescan.shared.runner import find_upward, have, print_topn, run
 
 _DEFAULT_MIN_CONFIDENCE = 60
 _DEFAULT_IGNORE_NAMES = ["__getattr__", "__dir__"]
+# Override callbacks invoked by the framework by reflection, not by AST call.
+# vulture is AST-local: it sees the def but not that HTMLParser().feed() and
+# SAX ContentHandler dispatch to these by name, so it reports them as dead —
+# the single largest source of vulture false-positives in real codebases.
+# Only specific override names (never bare generics like `run`/`handle`/
+# `setup`, which would mask genuinely-dead code). Standard protocol dunders
+# (__str__/__len__/__init__) and unittest lifecycle (setUp/tearDown) are
+# already ignored by vulture itself and intentionally NOT duplicated here.
+_PARSER_CALLBACK_NAMES = [
+    # html.parser.HTMLParser overrides
+    "handle_starttag",
+    "handle_endtag",
+    "handle_startendtag",
+    "handle_data",
+    "handle_comment",
+    "handle_entityref",
+    "handle_charref",
+    "handle_decl",
+    "handle_pi",
+    "unknown_decl",
+    # xml.sax ContentHandler overrides
+    "startElement",
+    "endElement",
+    "startElementNS",
+    "endElementNS",
+    "characters",
+    "startDocument",
+    "endDocument",
+    "startPrefixMapping",
+    "endPrefixMapping",
+    "ignorableWhitespace",
+    "processingInstruction",
+    "skippedEntity",
+]
 # Tokens that collide with OS-standard absolute paths (/tmp, /var/tmp) which
 # vulture resolves to. Segment-anchoring cannot rescue these: */tmp/* matches
 # every path under /tmp/, blinding the sensor under pytest's tmp_path and CI.
@@ -63,8 +97,8 @@ def _vulture_excludes(settings: dict) -> list[str]:
 
 
 def _vulture_ignore_names(settings: dict) -> list[str]:
-    """Merge module-hook names with project-level Vulture ignore names."""
-    ignore_names = [*_DEFAULT_IGNORE_NAMES]
+    """Merge framework callbacks and module hooks with project ignore names."""
+    ignore_names = [*_DEFAULT_IGNORE_NAMES, *_PARSER_CALLBACK_NAMES]
     project_ignore_names = settings.get("ignore_names", [])
     if isinstance(project_ignore_names, list):
         ignore_names.extend(str(name) for name in project_ignore_names)
