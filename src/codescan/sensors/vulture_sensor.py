@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -97,15 +98,69 @@ def _vulture_excludes(settings: dict) -> list[str]:
 
 
 def _vulture_ignore_names(settings: dict) -> list[str]:
-    """Merge framework callbacks and module hooks with project ignore names."""
-    ignore_names = [*_DEFAULT_IGNORE_NAMES, *_PARSER_CALLBACK_NAMES]
+    """Names vulture suppresses itself via --ignore-names (hooks + project).
+
+    Parser/ContentHandler callbacks are intentionally NOT here: vulture would
+    then suppress the method, but the method's def line is what lets the
+    post-filter pair it with its unused signature params. Callbacks are
+    suppressed in the post-filter instead, where the def line stays visible.
+    """
+    ignore_names = [*_DEFAULT_IGNORE_NAMES]
     project_ignore_names = settings.get("ignore_names", [])
     if isinstance(project_ignore_names, list):
         ignore_names.extend(str(name) for name in project_ignore_names)
     return list(dict.fromkeys(ignore_names))
 
 
-def _vulture_command(path: Path, min_confidence: int | None) -> tuple[list[str], int | str]:
+_VULTURE_LINE_RE = re.compile(r"^(?P<loc>.+?:\d+):\s+unused\s+(?P<kind>\w+)\s+'(?P<name>[^']+)'")
+
+
+def _parse_vulture_finding(line: str) -> tuple[str, str, str] | None:
+    """Return (loc_key, kind, name) for a vulture output line, else None.
+
+    ``loc_key`` is ``path:line`` — the def line vulture reports — so a callback
+    method and its signature parameters share the same key. That co-location is
+    what lets the arg-noise post-filter pair them.
+    """
+    match = _VULTURE_LINE_RE.match(line)
+    if match is None:
+        return None
+    return match["loc"], match["kind"], match["name"]
+
+
+def _drop_callback_findings(lines: list[str], callbacks: list[str]) -> list[str]:
+    """Suppress framework-callback findings and their signature-param noise.
+
+    vulture emits both the override method (e.g. ``handle_starttag``) and its
+    unused signature params (``tag``/``attrs``) on the same def line. We drop:
+    (a) the callback method/function/class itself, and (b) any unused-variable
+    /argument hit sharing its ``path:line`` — those params are protocol-signature
+    noise, not actionable dead code. Params on standalone lines are untouched.
+    """
+    suppressed = set(callbacks)
+    dominated: set[str] = set()
+    for ln in lines:
+        parsed = _parse_vulture_finding(ln)
+        if parsed and parsed[1] in ("method", "function", "class") and parsed[2] in suppressed:
+            dominated.add(parsed[0])
+    kept: list[str] = []
+    for ln in lines:
+        parsed = _parse_vulture_finding(ln)
+        if parsed is None:
+            kept.append(ln)
+            continue
+        loc, kind, name = parsed
+        if name in suppressed:
+            continue
+        if kind in ("variable", "argument") and loc in dominated:
+            continue
+        kept.append(ln)
+    return kept
+
+
+def _vulture_command(
+    path: Path, min_confidence: int | None
+) -> tuple[list[str], int | str, list[str]]:
     config_root = find_upward(path, "pyproject.toml")
     config = config_root / "pyproject.toml" if config_root is not None else None
     settings = _vulture_settings(config)
@@ -125,7 +180,9 @@ def _vulture_command(path: Path, min_confidence: int | None) -> tuple[list[str],
 
     command.extend(["--exclude", ",".join(_vulture_excludes(settings))])
     command.extend(["--ignore-names", ",".join(_vulture_ignore_names(settings))])
-    return command, effective_confidence
+    # Callbacks are post-filtered (not via --ignore-names) so their def line
+    # stays visible to dominate their signature params.
+    return command, effective_confidence, list(_PARSER_CALLBACK_NAMES)
 
 
 def cmd_dead_py(path: Path, min_confidence: int | None) -> int:
@@ -133,12 +190,13 @@ def cmd_dead_py(path: Path, min_confidence: int | None) -> int:
     if not have("vulture"):
         print("vulture not installed — skipping Python dead-code", file=sys.stderr)
         return 1
-    command, effective_confidence = _vulture_command(path, min_confidence)
+    command, effective_confidence, callbacks = _vulture_command(path, min_confidence)
     rc, out, err = run(command)
     lines = [ln for ln in (out or "").splitlines() if ln.strip()]
     if rc != 0 and not lines:
         print(f"vulture error: {err.strip()}", file=sys.stderr)
         return 2
+    lines = _drop_callback_findings(lines, callbacks)
     print(f"== vulture (Python dead code, min-confidence {effective_confidence}) on {path} ==")
     print(f"items: {len(lines)}")
     print_topn(lines)

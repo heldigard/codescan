@@ -171,6 +171,12 @@ def test_codescan_dead_ignores_parser_callbacks(tmp_path: Path) -> None:
     assert r.returncode == 0, f"dead failed: stdout={r.stdout} stderr={r.stderr}"
     assert "handle_starttag" not in r.stdout, f"HTMLParser callback flagged dead (FP): {r.stdout}"
     assert "handle_data" not in r.stdout, f"HTMLParser callback flagged dead (FP): {r.stdout}"
+    # vulture also reports the override signature params (tag/attrs/data) as
+    # unused on the same def line. The method is a framework override we ignore,
+    # so its params are protocol-signature noise, not actionable dead code.
+    assert "unused variable 'tag'" not in r.stdout, f"callback arg flagged dead (FP): {r.stdout}"
+    assert "unused variable 'attrs'" not in r.stdout, f"callback arg flagged dead (FP): {r.stdout}"
+    assert "unused variable 'data'" not in r.stdout, f"callback arg flagged dead (FP): {r.stdout}"
     assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
 
 
