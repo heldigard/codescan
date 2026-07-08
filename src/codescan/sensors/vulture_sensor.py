@@ -11,6 +11,11 @@ from codescan.shared.runner import find_upward, have, print_topn, run
 
 _DEFAULT_MIN_CONFIDENCE = 60
 _DEFAULT_IGNORE_NAMES = ["__getattr__", "__dir__"]
+# Tokens that collide with OS-standard absolute paths (/tmp, /var/tmp) which
+# vulture resolves to. Segment-anchoring cannot rescue these: */tmp/* matches
+# every path under /tmp/, blinding the sensor under pytest's tmp_path and CI.
+# Strip them entirely; the substring-artifact tokens (out/env/build/dist/target)
+# are handled by segment-anchoring in _vulture_excludes instead.
 _VULTURE_UNSAFE_EXCLUDES = {"tmp", "temp"}
 
 
@@ -28,10 +33,29 @@ def _vulture_settings(config: Path | None) -> dict:
 
 
 def _vulture_excludes(settings: dict) -> list[str]:
-    """Merge codescan vendor excludes with project-level Vulture excludes."""
-    excludes = [
-        exclude for exclude in VENDOR_EXCLUDES if exclude not in _VULTURE_UNSAFE_EXCLUDES
-    ]
+    """Segment-anchored vendor excludes for vulture.
+
+    vulture wraps any pattern lacking glob chars (``*?[``) in ``*...*``, turning
+    a bare ``out`` into ``*out*`` — a substring match that silently excludes
+    every path containing "out", e.g. ``agentic_cycle_router.py`` (r-OUT-er).
+    That blinded the sensor and produced false "unused" reports for symbols
+    called from such files (incident: ``update_from_prompt`` flagged dead while
+    live-called from ``agentic_cycle_router.py``).
+
+    Fix: emit directory-segment-anchored globs — ``*/<dir>/*`` for nested
+    vendor dirs (``src/pkg/<dir>/x.py``) and ``<dir>/*`` for scan-root vendor
+    dirs (``<dir>/x.py``). Both require ``<dir>/`` as a real path segment, so
+    ``router.py``/``environment.py``/``build_command.py`` are never matched.
+    This follows vulture's own convention for test detection (``*/test/*``).
+    Project-level excludes pass through verbatim; vulture's prepare_pattern
+    anchors bare project tokens per its own contract (the user's choice).
+    """
+    excludes: list[str] = []
+    for token in VENDOR_EXCLUDES:
+        if token in _VULTURE_UNSAFE_EXCLUDES:
+            continue
+        excludes.append(f"*/{token}/*")
+        excludes.append(f"{token}/*")
     project_excludes = settings.get("exclude", [])
     if isinstance(project_excludes, list):
         excludes.extend(str(exclude) for exclude in project_excludes)

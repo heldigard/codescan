@@ -90,16 +90,34 @@ def test_codescan_dead_detects(tmp_path: Path) -> None:
     assert ".venv" not in r.stdout, f"dead leaked .venv: {r.stdout}"
 
 
+def test_codescan_dead_no_substring_exclude_false_positive(tmp_path: Path) -> None:
+    """Vendor excludes must segment-anchor, not substring-match.
+
+    A bare 'out' token becomes vulture '*out*' which silently excludes every
+    path containing 'out' — e.g. router.py (r-OUT-er). That blinded the sensor
+    and falsely reported cross-file callees as dead. Regression for the
+    update_from_prompt incident (flagged dead while live-called from
+    agentic_cycle_router.py). helper is used by caller in router.py, so it
+    must NOT be reported dead even though router.py contains the 'out' token.
+    """
+    (tmp_path / "lib.py").write_text("def helper():\n    return 1\n")
+    (tmp_path / "router.py").write_text(
+        "from lib import helper\ndef caller():\n    return helper()\n"
+    )
+
+    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py"], check=False)
+    assert "helper" not in r.stdout, (
+        f"substring exclude blinded vulture: router.py excluded, helper falsely dead: {r.stdout}"
+    )
+
+
 def test_codescan_dead_respects_vulture_pyproject(tmp_path: Path) -> None:
     """codescan must pass the nearest pyproject.toml to vulture."""
     (tmp_path / "pyproject.toml").write_text(
-        "[tool.vulture]\n"
-        'ignore_names = ["configured_dead_func"]\n'
-        "min_confidence = 60\n"
+        '[tool.vulture]\nignore_names = ["configured_dead_func"]\nmin_confidence = 60\n'
     )
     (tmp_path / "app.py").write_text(
-        "def configured_dead_func():\n    return 1\n"
-        "def ordinary_dead_func():\n    return 2\n"
+        "def configured_dead_func():\n    return 1\ndef ordinary_dead_func():\n    return 2\n"
     )
 
     r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py"], check=False)
@@ -126,13 +144,10 @@ def test_codescan_dead_ignores_pep562_module_hooks(tmp_path: Path) -> None:
 def test_codescan_dead_single_file(tmp_path: Path) -> None:
     """codescan dead must correctly detect languages and run on a single file path."""
     app_file = tmp_path / "app.py"
-    app_file.write_text(
-        "def ordinary_dead_func():\n    return 2\n"
-    )
+    app_file.write_text("def ordinary_dead_func():\n    return 2\n")
     r = run(["codescan", "dead", "-p", str(app_file)], check=False)
     assert r.returncode == 0, f"dead on single file failed: stdout={r.stdout} stderr={r.stderr}"
     assert "ordinary_dead_func" in r.stdout, f"expected vulture finding: {r.stdout}"
-
 
 
 def test_codescan_secrets_excludes_cache_dirs(tmp_path: Path) -> None:
@@ -207,6 +222,10 @@ def main() -> int:
         proj.mkdir()
         test_codescan_dead_detects(proj)
         print("  codescan dead (vulture, vendor-excluded): OK")
+        substring_proj = Path(tmp) / "substring"
+        substring_proj.mkdir()
+        test_codescan_dead_no_substring_exclude_false_positive(substring_proj)
+        print("  codescan dead (no substring-exclude false positive): OK")
         test_codescan_arch_skips_without_config(proj)
         print("  codescan arch (skip without config): OK")
 
