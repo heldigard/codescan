@@ -1,4 +1,5 @@
 """semgrep SAST sensor — bugs + security anti-patterns."""
+
 from __future__ import annotations
 
 import argparse
@@ -27,7 +28,7 @@ def sec_payload(
     """Return the semgrep result payload without printing."""
     cfg = config or "auto"
     path_s = str(path)
-    empty_payload: dict[str, Any] = {
+    payload: dict[str, Any] = {
         "command": "sec",
         "schema_version": 1,
         "tool": "semgrep",
@@ -40,9 +41,9 @@ def sec_payload(
         "truncated": False,
     }
     if not have("semgrep"):
-        empty_payload["status"] = "missing_tool"
-        empty_payload["error"] = "semgrep not installed"
-        return 2, empty_payload, "semgrep not installed (pip3 install --user semgrep)"
+        payload["status"] = "missing_tool"
+        payload["error"] = "semgrep not installed"
+        return 2, payload, "semgrep not installed (pip3 install --user semgrep)"
     rc, out, err = run(
         [
             "semgrep",
@@ -56,22 +57,22 @@ def sec_payload(
         ]
     )
     if rc != 0 and not out.strip():
-        empty_payload["status"] = "error"
-        empty_payload["error"] = err.strip()
-        return 2, empty_payload, err.strip()
+        payload["status"] = "error"
+        payload["error"] = err.strip()
+        return 2, payload, err.strip()
     try:
         data = json.loads(out)
     except json.JSONDecodeError:
-        empty_payload["status"] = "error"
-        empty_payload["error"] = (out.strip() or err.strip())
-        return 1, empty_payload, out.strip() or err.strip()
+        payload["status"] = "error"
+        payload["error"] = out.strip() or err.strip()
+        return 1, payload, out.strip() or err.strip()
     results = data.get("results", [])
     by_sev: dict[str, int] = {}
     for result in results:
         sev = result.get("extra", {}).get("severity", "?")
         by_sev[sev] = by_sev.get(sev, 0) + 1
     findings = [_finding_payload(result) for result in results[:40]] if include_findings else []
-    empty_payload.update(
+    payload.update(
         {
             "counts": {"findings": len(results), "by_severity": by_sev},
             "findings": findings,
@@ -79,7 +80,7 @@ def sec_payload(
             "truncated": include_findings and len(results) > len(findings),
         }
     )
-    return 0, empty_payload, ""
+    return 0, payload, ""
 
 
 def cmd_sec(args: argparse.Namespace) -> int:

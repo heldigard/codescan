@@ -65,6 +65,14 @@ def run(
             out,
             err,
         )
+    except FileNotFoundError:
+        # Defense in depth: every sensor checks `have()` before calling run(),
+        # but if a binary vanishes from PATH between that check and the spawn
+        # (e.g. CI removes it), or a future sensor forgets the guard, degrade
+        # gracefully instead of printing a traceback. rc=127 follows the shell
+        # convention for "command not found"; sensors treat rc != 0 as error.
+        tool = cmd[0] if cmd else "command"
+        return (127, "", f"{tool} not found on PATH")
     return p.returncode, p.stdout, p.stderr
 
 
