@@ -50,12 +50,14 @@ def test_codescan_capabilities_contract() -> None:
     assert payload["schema_version"] == 1
     capabilities = payload["capabilities"]
     by_name = {item["name"]: item for item in capabilities}
-    for name in ("dead", "sec", "secrets", "arch", "all", "capabilities"):
+    for name in ("dead", "lint", "type", "sec", "secrets", "arch", "all", "capabilities"):
         assert name in by_name
         assert by_name[name]["read_only"] is True
         assert by_name[name]["destructive"] is False
     assert by_name["capabilities"]["structured_json"] is True
     assert by_name["dead"]["structured_json"] is True
+    assert by_name["lint"]["structured_json"] is True
+    assert by_name["type"]["structured_json"] is True
     assert by_name["sec"]["structured_json"] is True
     assert by_name["secrets"]["structured_json"] is True
     assert by_name["arch"]["structured_json"] is True
@@ -72,6 +74,7 @@ def test_all_parser_has_sensor_options() -> None:
     assert args.summary_only is False
     assert args.min_confidence is None
     assert args.target == "src"
+    assert args.type_tool == "auto"
 
 
 def test_codescan_dead_detects(tmp_path: Path) -> None:
@@ -320,6 +323,79 @@ def test_codescan_dead_json_reports_sensor_payload(tmp_path: Path) -> None:
     )
 
 
+def test_codescan_lint_json_is_compact(tmp_path: Path) -> None:
+    """Ruff JSON mode carries bounded lint metadata."""
+    bin_dir = tmp_path / "bin"
+    project = tmp_path / "project"
+    bin_dir.mkdir()
+    project.mkdir()
+    fake_bin(
+        bin_dir,
+        "ruff",
+        "printf '%s\\n' "
+        "'[{\"code\":\"F401\",\"filename\":\"app.py\","
+        "\"location\":{\"row\":3},\"message\":\"imported but unused\"}]'\n",
+    )
+
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    r = run(["codescan", "lint", "-p", str(project), "--json"], check=False, env=env)
+
+    assert r.returncode == 0, f"lint json failed: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["command"] == "lint"
+    assert payload["tool"] == "ruff"
+    assert payload["counts"] == {"findings": 1, "by_code": {"F401": 1}}
+    assert payload["findings"] == [
+        {
+            "code": "F401",
+            "path": "app.py",
+            "line": 3,
+            "message": "imported but unused",
+        }
+    ]
+
+
+def test_codescan_type_json_pyright_is_compact(tmp_path: Path) -> None:
+    """Pyright JSON mode carries bounded diagnostic metadata."""
+    bin_dir = tmp_path / "bin"
+    project = tmp_path / "project"
+    bin_dir.mkdir()
+    project.mkdir()
+    fake_bin(
+        bin_dir,
+        "pyright",
+        "printf '%s\\n' "
+        "'{\"generalDiagnostics\":[{\"severity\":\"error\",\"file\":\"app.py\","
+        "\"range\":{\"start\":{\"line\":4}},\"message\":\"not assignable\","
+        "\"rule\":\"reportAssignmentType\"}]}'\n"
+        "exit 1\n",
+    )
+
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    r = run(
+        ["codescan", "type", "-p", str(project), "--tool", "pyright", "--json"],
+        check=False,
+        env=env,
+    )
+
+    assert r.returncode == 0, f"type json failed: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["command"] == "type"
+    assert payload["tool"] == "pyright"
+    assert payload["counts"] == {"diagnostics": 1, "by_severity": {"error": 1}}
+    assert payload["findings"] == [
+        {
+            "severity": "error",
+            "path": "app.py",
+            "line": 5,
+            "message": "not assignable",
+            "rule": "reportAssignmentType",
+        }
+    ]
+
+
 def test_codescan_arch_json_skips_without_config(tmp_path: Path) -> None:
     """JSON mode should encode expected arch skips instead of forcing stderr scraping."""
     r = run(["codescan", "arch", "-p", str(tmp_path), "--json"], check=False)
@@ -340,6 +416,8 @@ def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
     (project / "app.py").write_text("def ordinary_dead_func():\n    return 2\n")
     fake_bin(bin_dir, "gitleaks", "printf '[]\\n'\n")
     fake_bin(bin_dir, "semgrep", "printf '%s\\n' '{\"results\":[]}'\n")
+    fake_bin(bin_dir, "ruff", "printf '[]\\n'\n")
+    fake_bin(bin_dir, "pyright", "printf '%s\\n' '{\"generalDiagnostics\":[]}'\n")
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
@@ -355,10 +433,14 @@ def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
     assert payload["summary"]["secrets"] == 0
     assert payload["summary"]["sast_findings"] == 0
     assert payload["summary"]["dead_items"] >= 1
+    assert payload["summary"]["lint_findings"] == 0
+    assert payload["summary"]["type_diagnostics"] == 0
     assert {sensor["command"] for sensor in payload["sensors"]} == {
         "secrets",
         "sec",
         "dead",
+        "lint",
+        "type",
         "arch",
     }
     sec_sensor = next(sensor for sensor in payload["sensors"] if sensor["command"] == "sec")

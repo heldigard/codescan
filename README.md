@@ -8,6 +8,8 @@ best-in-class tools and prints normalized, token-friendly summaries.
 | Subcommand | Tool | What it catches |
 |------------|------|-----------------|
 | `dead` | vulture (py) / knip (ts,js) | Unused funcs, classes, imports, exports |
+| `lint` | ruff | Fast Python lint diagnostics |
+| `type` | pyright / mypy | Python type diagnostics |
 | `sec` | semgrep | SAST bugs + security anti-patterns (30+ langs) |
 | `secrets` | gitleaks | Leaked keys/tokens in working tree |
 | `arch` | dependency-cruiser | Import-rule violations (layering, circular) |
@@ -27,6 +29,8 @@ codescan list           # verify sensors
 codescan list                          # show available sensors + versions
 codescan capabilities                  # JSON metadata: safety, cost, external tools
 codescan dead -p src/                  # dead code detection
+codescan lint -p src/                  # Python lint checks
+codescan type -p src/ --tool auto      # Python type checks
 codescan sec -p src/                   # SAST scan
 codescan secrets -p src/               # secret leak scan
 codescan arch -p src/                  # architecture rules (needs .dependency-cruiser.cjs)
@@ -44,7 +48,7 @@ and workers. It reports `schema_version`, available sensor names, safety hints
 tools, and rough cost so the big model can choose the narrowest useful quality
 sensor without memorizing CLI details.
 
-Every actionable sensor (`dead`, `sec`, `secrets`, `arch`, `all`) supports
+Every actionable sensor (`dead`, `lint`, `type`, `sec`, `secrets`, `arch`, `all`) supports
 `--json`. Prefer this mode for worker scripts and cheap/local model triage:
 payloads are bounded, schema-versioned, and expose aggregate counts plus a
 small findings list without forcing regex scraping of human output.
@@ -54,7 +58,8 @@ small findings list without forcing regex scraping of human output.
 codescan delegates — it does NOT bundle the analysis tools. Install what you need:
 
 ```bash
-pip install --user vulture semgrep     # Python sensors
+pip install --user vulture semgrep ruff mypy  # Python sensors
+npm install -g pyright                         # Python type sensor
 npm install -g knip dependency-cruiser # JS/TS sensors
 # gitleaks: https://github.com/gitleaks/gitleaks/releases
 ```

@@ -40,10 +40,13 @@ def cmd_all(args: argparse.Namespace) -> int:
     """Run every applicable sensor sequentially. CPU-safe (no parallel)."""
     from codescan.sensors.depcruiser_sensor import arch_payload, cmd_arch
     from codescan.sensors.gitleaks_sensor import cmd_secrets, secrets_payload
+    from codescan.sensors.ruff_sensor import cmd_lint, lint_payload
     from codescan.sensors.semgrep_sensor import cmd_sec, sec_payload
+    from codescan.sensors.type_sensor import cmd_type, type_payload
     from codescan.shared.runner import detect_langs
 
     path = Path(args.path)
+    langs = detect_langs(path)
     if getattr(args, "json", False):
         sensors = []
         _, payload, _ = secrets_payload(path)
@@ -54,7 +57,19 @@ def cmd_all(args: argparse.Namespace) -> int:
             include_findings=not getattr(args, "summary_only", False),
         )
         sensors.append(payload)
-        sensors.extend(_dead_payloads(path, detect_langs(path), args.min_confidence))
+        sensors.extend(_dead_payloads(path, langs, args.min_confidence))
+        if "py" in langs:
+            _, payload, _ = lint_payload(
+                path,
+                include_findings=not getattr(args, "summary_only", False),
+            )
+            sensors.append(payload)
+            _, payload, _ = type_payload(
+                path,
+                args.type_tool,
+                include_findings=not getattr(args, "summary_only", False),
+            )
+            sensors.append(payload)
         _, payload, _ = arch_payload(path, args.target)
         sensors.append(payload)
         summary = _summary_payload(sensors)
@@ -76,7 +91,10 @@ def cmd_all(args: argparse.Namespace) -> int:
     print(f"#### codescan all on {path} ####\n")
     _run_sensor(cmd_secrets, args, "secrets")
     _run_sensor(cmd_sec, args, "SAST")
-    _run_dead_sensors(path, detect_langs(path), args.min_confidence)
+    _run_dead_sensors(path, langs, args.min_confidence)
+    if "py" in langs:
+        _run_sensor(cmd_lint, args, "lint")
+        _run_sensor(cmd_type, args, "type")
     _run_sensor(cmd_arch, args, "arch")
     return 0
 
@@ -137,6 +155,8 @@ def _summary_payload(sensor_payloads: list[dict]) -> dict[str, int]:
         "secrets": 0,
         "sast_findings": 0,
         "dead_items": 0,
+        "lint_findings": 0,
+        "type_diagnostics": 0,
         "arch_violations": 0,
         "errors": 0,
         "skipped": 0,
@@ -144,8 +164,13 @@ def _summary_payload(sensor_payloads: list[dict]) -> dict[str, int]:
     for payload in sensor_payloads:
         counts = payload.get("counts", {})
         summary["secrets"] += int(counts.get("leaks", 0) or 0)
-        summary["sast_findings"] += int(counts.get("findings", 0) or 0)
+        if payload.get("command") == "sec":
+            summary["sast_findings"] += int(counts.get("findings", 0) or 0)
         summary["dead_items"] += int(counts.get("items", 0) or 0)
+        if payload.get("command") == "lint":
+            summary["lint_findings"] += int(counts.get("findings", 0) or 0)
+        if payload.get("command") == "type":
+            summary["type_diagnostics"] += int(counts.get("diagnostics", 0) or 0)
         summary["arch_violations"] += int(counts.get("violations", 0) or 0)
         status = payload.get("status")
         if status in ("error", "missing_tool"):
@@ -193,7 +218,9 @@ def _build_parser() -> argparse.ArgumentParser:
     """Build the argument parser with all subcommands."""
     from codescan.sensors.depcruiser_sensor import cmd_arch
     from codescan.sensors.gitleaks_sensor import cmd_secrets
+    from codescan.sensors.ruff_sensor import cmd_lint
     from codescan.sensors.semgrep_sensor import cmd_sec
+    from codescan.sensors.type_sensor import cmd_type
 
     ap = argparse.ArgumentParser(
         prog="codescan",
@@ -225,6 +252,26 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     dead_parser.add_argument("--json", action="store_true", help="emit compact JSON")
     dead_parser.set_defaults(func=_cmd_dead)
+
+    # lint
+    lint_parser = sub.add_parser("lint", help="fast Python lint checks (ruff)")
+    _add_path(lint_parser)
+    lint_parser.add_argument("--summary-only", action="store_true", help="counts only")
+    lint_parser.add_argument("--json", action="store_true", help="emit compact JSON")
+    lint_parser.set_defaults(func=cmd_lint)
+
+    # type
+    type_parser = sub.add_parser("type", help="Python type checks (pyright/mypy)")
+    _add_path(type_parser)
+    type_parser.add_argument(
+        "--tool",
+        choices=["auto", "pyright", "mypy"],
+        default="auto",
+        help="type checker to run (default: auto)",
+    )
+    type_parser.add_argument("--summary-only", action="store_true", help="counts only")
+    type_parser.add_argument("--json", action="store_true", help="emit compact JSON")
+    type_parser.set_defaults(func=cmd_type)
 
     # sec
     sec_parser = sub.add_parser("sec", help="SAST bugs+security (semgrep)")
@@ -259,6 +306,12 @@ def _build_parser() -> argparse.ArgumentParser:
     all_parser.add_argument(
         "--arch-target", dest="target", default="src",
         help="dependency-cruiser entry to cruise (default: src)",
+    )
+    all_parser.add_argument(
+        "--type-tool",
+        choices=["auto", "pyright", "mypy"],
+        default="auto",
+        help="type checker for Python projects (default: auto)",
     )
     all_parser.add_argument("--json", action="store_true", help="emit compact JSON")
     all_parser.set_defaults(func=cmd_all)

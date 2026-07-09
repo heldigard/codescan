@@ -11,6 +11,15 @@ from pathlib import Path
 DEFAULT_BIN_TIMEOUT = 180.0
 
 
+def _text(value: str | bytes | None) -> str:
+    """Normalize subprocess output captured from timeout exceptions."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value
+
+
 def _env_timeout() -> float:
     """Read the sensor timeout from env, falling back on bad values."""
     raw = environ.get("CODESCAN_BIN_TIMEOUT")
@@ -44,8 +53,8 @@ def run(
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         tool = cmd[0] if cmd else "command"
-        out = exc.stdout or ""
-        err = exc.stderr or ""
+        out = _text(exc.stdout)
+        err = _text(exc.stderr)
         note = f"{tool} timed out after {int(timeout)}s (set CODESCAN_BIN_TIMEOUT to raise it)"
         if err:
             err = f"{err.rstrip()}\n{note}"
@@ -132,4 +141,3 @@ def detect_langs(path: Path) -> set[str]:
         if _has_py_markers(p):
             langs.add("py")
     return langs
-

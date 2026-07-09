@@ -26,6 +26,9 @@ VENDOR_EXCLUDES: list[str] = [
 
 # Sensor binary names → display names.
 SENSORS: dict[str, str] = {
+    "ruff": "ruff",
+    "pyright": "pyright",
+    "mypy": "mypy",
     "semgrep": "semgrep",
     "gitleaks": "gitleaks",
     "vulture": "vulture",
