@@ -4,19 +4,34 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 from codescan.shared.runner import find_upward, have, print_topn, run
 
 
-def cmd_dead_js(path: Path) -> int:
-    """Run knip on a JS/TS project. Requires package.json."""
+def dead_js_payload(path: Path) -> tuple[int, dict[str, Any], str]:
+    """Return the knip result payload without printing."""
+    payload: dict[str, Any] = {
+        "command": "dead",
+        "schema_version": 1,
+        "tool": "knip",
+        "language": "javascript-typescript",
+        "path": str(path),
+        "status": "ok",
+        "counts": {"items": 0},
+        "findings": [],
+        "truncated": False,
+    }
     if not have("knip"):
-        print("knip not installed — skipping JS/TS dead-code", file=sys.stderr)
-        return 1
+        payload["status"] = "skipped"
+        payload["reason"] = "knip not installed"
+        return 1, payload, "knip not installed — skipping JS/TS dead-code"
     root = find_upward(path, "package.json")
     if root is None:
-        print("knip needs a package.json project — skipping JS/TS dead-code", file=sys.stderr)
-        return 1
+        payload["status"] = "skipped"
+        payload["reason"] = "package.json not found"
+        return 1, payload, "knip needs a package.json project — skipping JS/TS dead-code"
+    payload["root"] = str(root)
     rc, out, err = run(
         [
             "knip",
@@ -29,11 +44,34 @@ def cmd_dead_js(path: Path) -> int:
     )
     lines = [ln for ln in (out or "").splitlines() if ln.strip()]
     if rc != 0 and not lines:
-        print(f"knip error: {err.strip()}", file=sys.stderr)
-        return 2
-    print(f"== knip (JS/TS dead code) on {root} ==")
-    print(f"items: {len(lines)}")
-    print_topn(lines)
+        payload["status"] = "error"
+        payload["error"] = err.strip()
+        return 2, payload, err.strip()
+    findings = [{"text": line} for line in lines[:40]]
+    payload.update(
+        {
+            "counts": {"items": len(lines)},
+            "findings": findings,
+            "truncated": len(lines) > len(findings),
+        }
+    )
     if err.strip():
-        print(f"  (knip stderr: {err.strip()[:120]})", file=sys.stderr)
+        payload["stderr"] = err.strip()[:120]
+    return 0, payload, ""
+
+
+def cmd_dead_js(path: Path) -> int:
+    """Run knip on a JS/TS project. Requires package.json."""
+    rc, payload, error = dead_js_payload(path)
+    if payload["status"] == "skipped":
+        print(error, file=sys.stderr)
+        return rc
+    if payload["status"] == "error":
+        print(f"knip error: {error}", file=sys.stderr)
+        return rc
+    print(f"== knip (JS/TS dead code) on {payload['root']} ==")
+    print(f"items: {payload['counts']['items']}")
+    print_topn([str(item.get("text", "")) for item in payload["findings"]])
+    if payload.get("stderr"):
+        print(f"  (knip stderr: {payload['stderr']})", file=sys.stderr)
     return 0

@@ -55,6 +55,11 @@ def test_codescan_capabilities_contract() -> None:
         assert by_name[name]["read_only"] is True
         assert by_name[name]["destructive"] is False
     assert by_name["capabilities"]["structured_json"] is True
+    assert by_name["dead"]["structured_json"] is True
+    assert by_name["sec"]["structured_json"] is True
+    assert by_name["secrets"]["structured_json"] is True
+    assert by_name["arch"]["structured_json"] is True
+    assert by_name["all"]["structured_json"] is True
     assert by_name["all"]["open_world"] is True
 
 
@@ -236,6 +241,128 @@ def test_codescan_secrets_excludes_cache_dirs(tmp_path: Path) -> None:
     assert r.returncode == 0, f"secrets failed: stdout={r.stdout} stderr={r.stderr}"
     assert "leaks: 0" in r.stdout, r.stdout
     assert "__pycache__" not in r.stdout, r.stdout
+
+
+def test_codescan_secrets_json_is_compact_and_redacted(tmp_path: Path) -> None:
+    """JSON mode gives routers typed findings without exposing secret payloads."""
+    bin_dir = tmp_path / "bin"
+    project = tmp_path / "project"
+    bin_dir.mkdir()
+    project.mkdir()
+    fake_bin(
+        bin_dir,
+        "gitleaks",
+        'printf \'[{"RuleID":"generic-api-key","File":"app.py","StartLine":7}]\\n\'\n',
+    )
+
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    r = run(["codescan", "secrets", "-p", str(project), "--json"], check=False, env=env)
+
+    assert r.returncode == 0, f"secrets json failed: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["command"] == "secrets"
+    assert payload["redacted"] is True
+    assert payload["counts"]["leaks"] == 1
+    assert payload["findings"] == [
+        {"rule_id": "generic-api-key", "file": "app.py", "line": 7}
+    ]
+
+
+def test_codescan_sec_json_is_compact(tmp_path: Path) -> None:
+    """Semgrep JSON mode carries counts and bounded finding metadata."""
+    bin_dir = tmp_path / "bin"
+    project = tmp_path / "project"
+    bin_dir.mkdir()
+    project.mkdir()
+    fake_bin(
+        bin_dir,
+        "semgrep",
+        "printf '%s\\n' "
+        "'{\"results\":[{\"check_id\":\"python.lang.security.audit.dynamic-urllib-use-detected\","
+        "\"path\":\"app.py\",\"start\":{\"line\":12},"
+        "\"extra\":{\"severity\":\"WARNING\",\"message\":\"dynamic urllib\"}}]}'\n",
+    )
+
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    r = run(["codescan", "sec", "-p", str(project), "--json"], check=False, env=env)
+
+    assert r.returncode == 0, f"sec json failed: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["command"] == "sec"
+    assert payload["counts"] == {"findings": 1, "by_severity": {"WARNING": 1}}
+    assert payload["findings"] == [
+        {
+            "severity": "WARNING",
+            "path": "app.py",
+            "line": 12,
+            "check_id": "python.lang.security.audit.dynamic-urllib-use-detected",
+            "message": "dynamic urllib",
+        }
+    ]
+    assert payload["findings_omitted"] is False
+
+
+def test_codescan_dead_json_reports_sensor_payload(tmp_path: Path) -> None:
+    """Dead-code JSON mode gives routers typed sensor payloads."""
+    (tmp_path / "app.py").write_text("def ordinary_dead_func():\n    return 2\n")
+
+    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py", "--json"], check=False)
+
+    assert r.returncode == 0, f"dead json failed: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["command"] == "dead"
+    assert payload["counts"]["items"] >= 1
+    assert payload["sensors"][0]["tool"] == "vulture"
+    assert any(
+        item.get("name") == "ordinary_dead_func" for item in payload["sensors"][0]["findings"]
+    )
+
+
+def test_codescan_arch_json_skips_without_config(tmp_path: Path) -> None:
+    """JSON mode should encode expected arch skips instead of forcing stderr scraping."""
+    r = run(["codescan", "arch", "-p", str(tmp_path), "--json"], check=False)
+
+    assert r.returncode == 0, f"arch json skip failed: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["command"] == "arch"
+    assert payload["status"] == "skipped"
+    assert payload["counts"]["violations"] == 0
+
+
+def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
+    """all --json is the compact router handoff for a whole quality pass."""
+    bin_dir = tmp_path / "bin"
+    project = tmp_path / "project"
+    bin_dir.mkdir()
+    project.mkdir()
+    (project / "app.py").write_text("def ordinary_dead_func():\n    return 2\n")
+    fake_bin(bin_dir, "gitleaks", "printf '[]\\n'\n")
+    fake_bin(bin_dir, "semgrep", "printf '%s\\n' '{\"results\":[]}'\n")
+
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    r = run(
+        ["codescan", "all", "-p", str(project), "--json", "--summary-only"],
+        check=False,
+        env=env,
+    )
+
+    assert r.returncode == 0, f"all json failed: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["command"] == "all"
+    assert payload["summary"]["secrets"] == 0
+    assert payload["summary"]["sast_findings"] == 0
+    assert payload["summary"]["dead_items"] >= 1
+    assert {sensor["command"] for sensor in payload["sensors"]} == {
+        "secrets",
+        "sec",
+        "dead",
+        "arch",
+    }
+    sec_sensor = next(sensor for sensor in payload["sensors"] if sensor["command"] == "sec")
+    assert sec_sensor["findings_omitted"] is True
 
 
 def test_codescan_arch_skips_without_config(tmp_path: Path) -> None:

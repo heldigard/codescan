@@ -31,6 +31,7 @@ codescan sec -p src/                   # SAST scan
 codescan secrets -p src/               # secret leak scan
 codescan arch -p src/                  # architecture rules (needs .dependency-cruiser.cjs)
 codescan all -p src/                   # run every sensor, summarize
+codescan all -p src/ --json            # compact structured handoff for routers/workers
 ```
 
 `codescan dead` passes the nearest `pyproject.toml` to Vulture when present,
@@ -42,6 +43,11 @@ and workers. It reports `schema_version`, available sensor names, safety hints
 (`read_only`, `destructive`, `idempotent`, `open_world`), required external
 tools, and rough cost so the big model can choose the narrowest useful quality
 sensor without memorizing CLI details.
+
+Every actionable sensor (`dead`, `sec`, `secrets`, `arch`, `all`) supports
+`--json`. Prefer this mode for worker scripts and cheap/local model triage:
+payloads are bounded, schema-versioned, and expose aggregate counts plus a
+small findings list without forcing regex scraping of human output.
 
 ## External tools
 

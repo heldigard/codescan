@@ -5,16 +5,44 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from codescan.shared.runner import die, have, print_topn, run
 
 
-def cmd_sec(args: argparse.Namespace) -> int:
-    """semgrep SAST. Prints finding counts by severity — not the full diff."""
+def _finding_payload(result: dict[str, Any]) -> dict[str, Any]:
+    extra = result.get("extra", {})
+    return {
+        "severity": extra.get("severity", "?"),
+        "path": result.get("path", "?"),
+        "line": result.get("start", {}).get("line"),
+        "check_id": result.get("check_id", "?"),
+        "message": extra.get("message"),
+    }
+
+
+def sec_payload(
+    path: Path, config: str | None, *, include_findings: bool = True
+) -> tuple[int, dict[str, Any], str]:
+    """Return the semgrep result payload without printing."""
+    cfg = config or "auto"
+    path_s = str(path)
+    empty_payload: dict[str, Any] = {
+        "command": "sec",
+        "schema_version": 1,
+        "tool": "semgrep",
+        "path": path_s,
+        "config": cfg,
+        "status": "ok",
+        "counts": {"findings": 0, "by_severity": {}},
+        "findings": [],
+        "findings_omitted": not include_findings,
+        "truncated": False,
+    }
     if not have("semgrep"):
-        die("semgrep not installed (pip3 install --user semgrep)", 2)
-    cfg = args.config or "auto"
-    path = str(Path(args.path))
+        empty_payload["status"] = "missing_tool"
+        empty_payload["error"] = "semgrep not installed"
+        return 2, empty_payload, "semgrep not installed (pip3 install --user semgrep)"
     rc, out, err = run(
         [
             "semgrep",
@@ -24,31 +52,61 @@ def cmd_sec(args: argparse.Namespace) -> int:
             "--json",
             "--quiet",
             "--disable-version-check",
-            path,
+            path_s,
         ]
     )
     if rc != 0 and not out.strip():
-        print(f"semgrep error:\n{err.strip()}", file=sys.stderr)
-        return 2
+        empty_payload["status"] = "error"
+        empty_payload["error"] = err.strip()
+        return 2, empty_payload, err.strip()
     try:
         data = json.loads(out)
     except json.JSONDecodeError:
-        print(out.strip() or err.strip())
-        return 1
+        empty_payload["status"] = "error"
+        empty_payload["error"] = (out.strip() or err.strip())
+        return 1, empty_payload, out.strip() or err.strip()
     results = data.get("results", [])
     by_sev: dict[str, int] = {}
-    for r in results:
-        sev = r.get("extra", {}).get("severity", "?")
+    for result in results:
+        sev = result.get("extra", {}).get("severity", "?")
         by_sev[sev] = by_sev.get(sev, 0) + 1
+    findings = [_finding_payload(result) for result in results[:40]] if include_findings else []
+    empty_payload.update(
+        {
+            "counts": {"findings": len(results), "by_severity": by_sev},
+            "findings": findings,
+            "findings_omitted": not include_findings,
+            "truncated": include_findings and len(results) > len(findings),
+        }
+    )
+    return 0, empty_payload, ""
+
+
+def cmd_sec(args: argparse.Namespace) -> int:
+    """semgrep SAST. Prints finding counts by severity — not the full diff."""
+    cfg = args.config or "auto"
+    path = str(Path(args.path))
+    include_findings = not getattr(args, "summary_only", False)
+    rc, payload, error = sec_payload(Path(path), cfg, include_findings=include_findings)
+    if payload["status"] == "missing_tool":
+        die("semgrep not installed (pip3 install --user semgrep)", 2)
+    if payload["status"] == "error":
+        print(error, file=sys.stderr)
+        return rc
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
     print(f"== semgrep SAST on {path} (config={cfg}) ==")
-    counts = "  ".join(f"{k}:{v}" for k, v in sorted(by_sev.items()))
-    print(f"findings: {len(results)}" + (f"  {counts}" if counts else ""))
-    if results and not args.summary_only:
+    counts_map = payload["counts"]["by_severity"]
+    counts = "  ".join(f"{k}:{v}" for k, v in sorted(counts_map.items()))
+    total = payload["counts"]["findings"]
+    print(f"findings: {total}" + (f"  {counts}" if counts else ""))
+    if payload["findings"] and not args.summary_only:
         items = []
-        for result in results:
-            check = result.get("check_id", "?").split(".")[-1]
-            loc = result.get("path", "?") + ":" + str(result.get("start", {}).get("line", "?"))
-            sev = result.get("extra", {}).get("severity", "?")
+        for result in payload["findings"]:
+            check = str(result.get("check_id", "?")).split(".")[-1]
+            loc = result.get("path", "?") + ":" + str(result.get("line", "?"))
+            sev = result.get("severity", "?")
             items.append(f"[{sev}] {loc}  {check}")
         print_topn(items)
     return 0

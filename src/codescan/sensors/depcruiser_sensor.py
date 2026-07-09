@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from codescan.shared.runner import die, find_upward, have, print_topn, run
 
@@ -25,29 +27,71 @@ def _root_for(path: Path) -> Path:
     )
 
 
-def cmd_arch(args: argparse.Namespace) -> int:
-    """dependency-cruiser: validate import-graph rules. Requires .dependency-cruiser.cjs/.js."""
+def arch_payload(path: Path, target: str | None) -> tuple[int, dict[str, Any], str]:
+    """Return the dependency-cruiser result payload without printing."""
     tool = "depcruise" if have("depcruise") else "dependency-cruiser"
+    payload: dict[str, Any] = {
+        "command": "arch",
+        "schema_version": 1,
+        "tool": tool,
+        "path": str(path),
+        "status": "ok",
+        "counts": {"violations": 0},
+        "findings": [],
+        "truncated": False,
+    }
     if not have(tool):
-        die("dependency-cruiser not installed", 2)
-    path = Path(args.path)
+        payload["status"] = "missing_tool"
+        payload["error"] = "dependency-cruiser not installed"
+        return 2, payload, "dependency-cruiser not installed"
     root = _root_for(path)
+    payload["root"] = str(root)
     configs = [root / ".dependency-cruiser.cjs", root / ".dependency-cruiser.js"]
     cfg = next((candidate for candidate in configs if candidate.exists()), None)
     if cfg is None:
-        print(f"no .dependency-cruiser.cjs/.js in {root} — skipping arch rules", file=sys.stderr)
+        payload["status"] = "skipped"
+        payload["reason"] = f"no .dependency-cruiser.cjs/.js in {root}"
+        return 1, payload, str(payload["reason"])
+    cruise_target = target or "src"
+    payload["target"] = cruise_target
+    payload["config"] = str(cfg)
+    rc, out, err = run([tool, "--config", str(cfg), cruise_target], cwd=root)
+    lines = [ln for ln in (out or "").splitlines() if ln.strip()]
+    lines = [ln for ln in lines if _is_violation(ln)]
+    if rc != 0 and not lines:
+        payload["status"] = "error"
+        payload["error"] = err.strip()
+        return 2, payload, err.strip()
+    findings = [{"text": line} for line in lines[:40]]
+    payload.update(
+        {
+            "counts": {"violations": len(lines)},
+            "findings": findings,
+            "truncated": len(lines) > len(findings),
+        }
+    )
+    return 0, payload, ""
+
+
+def cmd_arch(args: argparse.Namespace) -> int:
+    """dependency-cruiser: validate import-graph rules. Requires .dependency-cruiser.cjs/.js."""
+    path = Path(args.path)
+    rc, payload, error = arch_payload(path, args.target)
+    if payload["status"] == "missing_tool":
+        die("dependency-cruiser not installed", 2)
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0 if payload["status"] in ("ok", "skipped") else rc
+    if payload["status"] == "skipped":
+        print(f"{error} — skipping arch rules", file=sys.stderr)
         print(
             "  create one: npx depcruise init (a project decision, not auto-run)", file=sys.stderr
         )
-        return 1
-    target = args.target or "src"
-    rc, out, err = run([tool, "--config", str(cfg), target], cwd=root)
-    lines = [ln for ln in (out or "").splitlines() if ln.strip()]
-    lines = [ln for ln in lines if _is_violation(ln)]  # keep only rule violations
-    if rc != 0 and not lines:
-        print(f"dependency-cruiser error: {err.strip()}", file=sys.stderr)
-        return 2
-    print(f"== dependency-cruiser on {root}/{target} ==")
-    print(f"output lines: {len(lines)}")
-    print_topn(lines)
+        return rc
+    if payload["status"] == "error":
+        print(f"dependency-cruiser error: {error}", file=sys.stderr)
+        return rc
+    print(f"== dependency-cruiser on {payload['root']}/{payload['target']} ==")
+    print(f"output lines: {payload['counts']['violations']}")
+    print_topn([str(item.get("text", "")) for item in payload["findings"]])
     return 0

@@ -6,6 +6,7 @@ import re
 import sys
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from codescan.shared.config import VENDOR_EXCLUDES
 from codescan.shared.runner import find_upward, have, print_topn, run
@@ -138,6 +139,14 @@ def _parse_vulture_finding(line: str) -> tuple[str, str, str] | None:
     return match["loc"], match["kind"], match["name"]
 
 
+def _finding_payload(line: str) -> dict[str, Any]:
+    parsed = _parse_vulture_finding(line)
+    if parsed is None:
+        return {"text": line}
+    loc, kind, name = parsed
+    return {"location": loc, "kind": kind, "name": name, "text": line}
+
+
 def _drop_callback_findings(lines: list[str], callbacks: list[str]) -> list[str]:
     """Suppress framework-callback findings and their signature-param noise.
 
@@ -195,19 +204,56 @@ def _vulture_command(
     return command, effective_confidence, list(_FRAMEWORK_CALLBACK_NAMES)
 
 
-def cmd_dead_py(path: Path, min_confidence: int | None) -> int:
-    """Run vulture on a Python project."""
+def dead_py_payload(path: Path, min_confidence: int | None) -> tuple[int, dict[str, Any], str]:
+    """Return the vulture result payload without printing."""
+    payload: dict[str, Any] = {
+        "command": "dead",
+        "schema_version": 1,
+        "tool": "vulture",
+        "language": "python",
+        "path": str(path),
+        "status": "ok",
+        "counts": {"items": 0},
+        "findings": [],
+        "truncated": False,
+    }
     if not have("vulture"):
-        print("vulture not installed — skipping Python dead-code", file=sys.stderr)
-        return 1
+        payload["status"] = "skipped"
+        payload["reason"] = "vulture not installed"
+        return 1, payload, "vulture not installed — skipping Python dead-code"
     command, effective_confidence, callbacks = _vulture_command(path, min_confidence)
+    payload["min_confidence"] = effective_confidence
     rc, out, err = run(command)
     lines = [ln for ln in (out or "").splitlines() if ln.strip()]
     if rc != 0 and not lines:
-        print(f"vulture error: {err.strip()}", file=sys.stderr)
-        return 2
+        payload["status"] = "error"
+        payload["error"] = err.strip()
+        return 2, payload, err.strip()
     lines = _drop_callback_findings(lines, callbacks)
-    print(f"== vulture (Python dead code, min-confidence {effective_confidence}) on {path} ==")
-    print(f"items: {len(lines)}")
-    print_topn(lines)
+    findings = [_finding_payload(line) for line in lines[:40]]
+    payload.update(
+        {
+            "counts": {"items": len(lines)},
+            "findings": findings,
+            "truncated": len(lines) > len(findings),
+        }
+    )
+    return 0, payload, ""
+
+
+def cmd_dead_py(path: Path, min_confidence: int | None) -> int:
+    """Run vulture on a Python project."""
+    rc, payload, error = dead_py_payload(path, min_confidence)
+    if payload["status"] == "skipped":
+        print(error, file=sys.stderr)
+        return rc
+    if payload["status"] == "error":
+        print(f"vulture error: {error}", file=sys.stderr)
+        return rc
+    print(
+        "== vulture "
+        f"(Python dead code, min-confidence {payload['min_confidence']}) on {path} =="
+    )
+    print(f"items: {payload['counts']['items']}")
+    print_topn([str(item.get("text", "")) for item in payload["findings"]])
     return 0
