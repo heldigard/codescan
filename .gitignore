@@ -16,3 +16,8 @@ htmlcov/
 *.log
 .memory-bank/
 .claude/orchestration/
+
+# cli-orchestration: cross-CLI coordination registry (runtime noise, auto-managed)
+.memory-bank/agent-sessions.md
+.memory-bank/topics/agent-sessions.md
+.memory-bank/blocked-writes.log
