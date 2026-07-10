@@ -8,7 +8,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from codescan.shared.config import VENDOR_EXCLUDES
+from codescan.shared.config import SCAN_EXCLUDES
 from codescan.shared.runner import find_upward, have, print_topn, run
 
 _DEFAULT_MIN_CONFIDENCE = 60
@@ -97,7 +97,7 @@ def _vulture_excludes(settings: dict) -> list[str]:
     anchors bare project tokens per its own contract (the user's choice).
     """
     excludes: list[str] = []
-    for token in VENDOR_EXCLUDES:
+    for token in SCAN_EXCLUDES:
         if token in _VULTURE_UNSAFE_EXCLUDES:
             continue
         excludes.append(f"*/{token}/*")

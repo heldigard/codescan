@@ -101,6 +101,7 @@ CAPABILITIES: tuple[dict[str, Any], ...] = (
             "dependency-cruiser",
         ),
         "cost": "expensive",
+        "ci_exit_policies": ("never", "errors", "findings"),
     },
     {
         "name": "capabilities",

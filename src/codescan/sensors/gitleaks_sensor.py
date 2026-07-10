@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from codescan.shared.config import VENDOR_EXCLUDES
+from codescan.shared.config import SCAN_EXCLUDES, SENSITIVE_FILE_PATTERNS
 from codescan.shared.runner import die, have, print_topn, run
 
 
@@ -23,8 +23,9 @@ def _leak_payload(leak: dict[str, Any]) -> dict[str, Any]:
 
 
 def _gitleaks_allowlist_config() -> str:
-    escaped = [re.escape(item) for item in VENDOR_EXCLUDES]
-    path_pattern = rf"(^|/)({'|'.join(escaped)})(/|$)"
+    escaped = [re.escape(item) for item in SCAN_EXCLUDES]
+    directory_pattern = rf"(^|/)({'|'.join(escaped)})(/|$)"
+    sensitive_file_pattern = rf"(^|/)({'|'.join(SENSITIVE_FILE_PATTERNS)})$"
     return "\n".join(
         [
             "[extend]",
@@ -32,7 +33,8 @@ def _gitleaks_allowlist_config() -> str:
             "",
             "[allowlist]",
             "paths = [",
-            f"  '''{path_pattern}''',",
+            f"  '''{directory_pattern}''',",
+            f"  '''{sensitive_file_pattern}''',",
             "]",
             "",
         ]

@@ -18,7 +18,12 @@ that loads schemas into context permanently.
 - Lint: `ruff check .` · Format: `ruff format --check .`
 
 ## Subcommands
-`codescan` console script: `list`, `dead`, `sec`, `secrets`, `arch`, `all`.
+`codescan` console script: `list`, `capabilities`, `dead`, `lint`, `type`,
+`sec`, `secrets`, `arch`, `all`.
+
+For CI/router gates, use `codescan all --json --summary-only --fail-on errors`
+to fail only on unavailable/broken sensors, or `--fail-on findings` to fail on
+quality findings too. The default remains report-only for agent workflows.
 
 ## Stack
 - Python ≥ 3.11; build backend hatchling; package `codescan-cli` (import `codescan`).

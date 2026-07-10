@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from codescan.shared.config import SCAN_EXCLUDES
 from codescan.shared.runner import die, have, print_topn, run
 
 
@@ -38,7 +39,18 @@ def lint_payload(path: Path, *, include_findings: bool = True) -> tuple[int, dic
         payload["error"] = "ruff not installed"
         return 2, payload, "ruff not installed"
 
-    rc, out, err = run(["ruff", "check", "--output-format", "json", str(path)])
+    excludes = ",".join(f"**/{token}/**" for token in SCAN_EXCLUDES)
+    rc, out, err = run(
+        [
+            "ruff",
+            "check",
+            "--output-format",
+            "json",
+            "--extend-exclude",
+            excludes,
+            str(path),
+        ]
+    )
     if rc != 0 and not out.strip():
         payload["status"] = "error"
         payload["error"] = err.strip()

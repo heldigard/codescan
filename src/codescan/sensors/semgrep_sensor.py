@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from codescan.shared.config import SCAN_EXCLUDES
 from codescan.shared.runner import die, have, print_topn, run
 
 
@@ -44,6 +45,9 @@ def sec_payload(
         payload["status"] = "missing_tool"
         payload["error"] = "semgrep not installed"
         return 2, payload, "semgrep not installed (pip3 install --user semgrep)"
+    exclude_args = [
+        item for token in SCAN_EXCLUDES for item in ("--exclude", f"**/{token}/**")
+    ]
     rc, out, err = run(
         [
             "semgrep",
@@ -53,6 +57,7 @@ def sec_payload(
             "--json",
             "--quiet",
             "--disable-version-check",
+            *exclude_args,
             path_s,
         ]
     )

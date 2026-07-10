@@ -43,8 +43,13 @@ def test_codescan_list() -> None:
     assert "available" in r.stdout, f"codescan list malformed: {r.stdout}"
 
 
+def test_codescan_version() -> None:
+    r = run(["codescan", "--version"])
+    assert r.stdout.strip() == "codescan 1.1.0"
+
+
 def test_codescan_capabilities_contract() -> None:
-    r = run(["codescan", "capabilities"])
+    r = run(["codescan", "capabilities", "--json"])
     payload = json.loads(r.stdout)
     assert payload["command"] == "capabilities"
     assert payload["schema_version"] == 1
@@ -63,6 +68,8 @@ def test_codescan_capabilities_contract() -> None:
     assert by_name["arch"]["structured_json"] is True
     assert by_name["all"]["structured_json"] is True
     assert by_name["all"]["open_world"] is True
+    assert by_name["all"]["ci_exit_policies"] == ["never", "errors", "findings"]
+    assert r.stdout.count("\n") == 1, "router manifest stays compact"
 
 
 def test_all_parser_has_sensor_options() -> None:
@@ -75,6 +82,7 @@ def test_all_parser_has_sensor_options() -> None:
     assert args.min_confidence is None
     assert args.target == "src"
     assert args.type_tool == "auto"
+    assert args.fail_on == "never"
 
 
 def test_codescan_dead_detects(tmp_path: Path) -> None:
@@ -232,12 +240,23 @@ def test_codescan_dead_single_file(tmp_path: Path) -> None:
 
 
 def test_codescan_secrets_excludes_cache_dirs(tmp_path: Path) -> None:
-    """gitleaks must ignore generated caches such as pytest-created .pyc files."""
+    """gitleaks must not inspect caches, harness runtime, or credential stores."""
     if not shutil.which("gitleaks"):
         pytest.skip("gitleaks not installed")
     cache = tmp_path / "__pycache__"
     cache.mkdir()
     (cache / "fixture.pyc").write_bytes(b"binary ghp_" + b"0" * 36)
+    for relative in (
+        ".credentials.json",
+        ".env",
+        "file-history/old.txt",
+        "plugins/cache/vendor.txt",
+        "plugins/marketplaces/vendor.txt",
+        "sessions/archived.jsonl",
+    ):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("ghp_" + "0" * 36, encoding="utf-8")
 
     r = run(["codescan", "secrets", "-p", str(tmp_path)], check=False)
 
@@ -396,6 +415,25 @@ def test_codescan_type_json_pyright_is_compact(tmp_path: Path) -> None:
     ]
 
 
+def test_type_sensor_uses_scanned_project_as_working_directory(monkeypatch, tmp_path: Path) -> None:
+    """Project-local pyright config/imports must not depend on caller cwd."""
+    import codescan.sensors.type_sensor as sensor
+
+    captured: dict[str, Path | None] = {}
+
+    def fake_run(_command, *, cwd=None, timeout=None):
+        del timeout
+        captured["cwd"] = cwd
+        return 0, '{"generalDiagnostics":[]}', ""
+
+    monkeypatch.setattr(sensor, "run", fake_run)
+    rc, payload, _ = sensor._pyright_payload(tmp_path, include_findings=False)
+
+    assert rc == 0
+    assert payload["counts"]["diagnostics"] == 0
+    assert captured["cwd"] == tmp_path
+
+
 def test_codescan_arch_json_skips_without_config(tmp_path: Path) -> None:
     """JSON mode should encode expected arch skips instead of forcing stderr scraping."""
     r = run(["codescan", "arch", "-p", str(tmp_path), "--json"], check=False)
@@ -430,6 +468,7 @@ def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
     assert r.returncode == 0, f"all json failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
     assert payload["command"] == "all"
+    assert payload["status"] == "findings"
     assert payload["summary"]["secrets"] == 0
     assert payload["summary"]["sast_findings"] == 0
     assert payload["summary"]["dead_items"] >= 1
@@ -445,6 +484,66 @@ def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
     }
     sec_sensor = next(sensor for sensor in payload["sensors"] if sensor["command"] == "sec")
     assert sec_sensor["findings_omitted"] is True
+
+    gated = run(
+        [
+            "codescan",
+            "all",
+            "-p",
+            str(project),
+            "--json",
+            "--summary-only",
+            "--fail-on",
+            "findings",
+        ],
+        check=False,
+        env=env,
+    )
+    assert gated.returncode == 1
+    assert json.loads(gated.stdout)["status"] == "findings"
+
+
+def test_codescan_all_fail_on_requires_json(tmp_path: Path) -> None:
+    r = run(
+        ["codescan", "all", "-p", str(tmp_path), "--fail-on", "errors"],
+        check=False,
+    )
+    assert r.returncode == 2
+    assert "requires --json" in r.stderr
+
+
+def test_codescan_all_fail_on_errors_distinguishes_sensor_failure(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    project = tmp_path / "project"
+    bin_dir.mkdir()
+    project.mkdir()
+    (project / "app.py").write_text("value = 1\n")
+    fake_bin(bin_dir, "gitleaks", "printf '[]\\n'\n")
+    fake_bin(bin_dir, "semgrep", "printf 'sensor unavailable\\n' >&2\nexit 2\n")
+    fake_bin(bin_dir, "ruff", "printf '[]\\n'\n")
+    fake_bin(bin_dir, "pyright", "printf '%s\\n' '{\"generalDiagnostics\":[]}'\n")
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+
+    r = run(
+        [
+            "codescan",
+            "all",
+            "-p",
+            str(project),
+            "--json",
+            "--summary-only",
+            "--fail-on",
+            "errors",
+        ],
+        check=False,
+        env=env,
+    )
+
+    assert r.returncode == 2
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "degraded"
+    assert payload["summary"]["errors"] == 1
 
 
 def test_codescan_arch_skips_without_config(tmp_path: Path) -> None:

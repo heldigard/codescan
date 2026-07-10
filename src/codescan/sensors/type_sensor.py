@@ -27,7 +27,8 @@ def _select_tool(tool: str) -> str | None:
 
 
 def _pyright_payload(path: Path, include_findings: bool) -> tuple[int, dict[str, Any], str]:
-    rc, out, err = run(["pyright", str(path), "--outputjson"])
+    workdir = path if path.is_dir() else path.parent
+    rc, out, err = run(["pyright", str(path), "--outputjson"], cwd=workdir)
     payload: dict[str, Any] = {
         "command": "type",
         "schema_version": 1,
@@ -80,7 +81,10 @@ def _pyright_payload(path: Path, include_findings: bool) -> tuple[int, dict[str,
 
 
 def _mypy_payload(path: Path, include_findings: bool) -> tuple[int, dict[str, Any], str]:
-    rc, out, err = run(["mypy", "--show-error-codes", "--no-error-summary", str(path)])
+    workdir = path if path.is_dir() else path.parent
+    rc, out, err = run(
+        ["mypy", "--show-error-codes", "--no-error-summary", str(path)], cwd=workdir
+    )
     payload: dict[str, Any] = {
         "command": "type",
         "schema_version": 1,

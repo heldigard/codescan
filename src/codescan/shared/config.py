@@ -24,6 +24,31 @@ VENDOR_EXCLUDES: list[str] = [
     ".idea", ".vscode", ".vs", ".history",
 ]
 
+# Harness/runtime trees that are neither project source nor safe secret-scan
+# inputs. Keep known credential stores out of gitleaks separately below.
+RUNTIME_EXCLUDES: list[str] = [
+    ".memory-bank",
+    ".ssh",
+    "delegations",
+    "file-history",
+    "logs",
+    "plugins/cache",
+    "plugins/marketplaces",
+    "plugins/plugin-catalog-cache.json",
+    "projects",
+    "sessions",
+    "shell-snapshots",
+    "tasks",
+]
+
+SCAN_EXCLUDES: list[str] = [*VENDOR_EXCLUDES, *RUNTIME_EXCLUDES]
+
+SENSITIVE_FILE_PATTERNS: tuple[str, ...] = (
+    r"\.env(?:\.[^/]*)?",
+    r"\.?credentials\.json",
+    r"auth\.json",
+)
+
 # Sensor binary names → display names.
 SENSORS: dict[str, str] = {
     "ruff": "ruff",

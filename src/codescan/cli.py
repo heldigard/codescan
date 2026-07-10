@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+from codescan import __version__
 from codescan.capabilities import capabilities_payload
 from codescan.shared.config import SENSORS
 from codescan.shared.runner import have, version_of
@@ -23,7 +24,7 @@ def cmd_list(_args: argparse.Namespace) -> int:
 
 def cmd_capabilities(_args: argparse.Namespace) -> int:
     """Emit sensor capability metadata for orchestrators."""
-    print(json.dumps(capabilities_payload(), indent=2, ensure_ascii=False))
+    print(json.dumps(capabilities_payload(), ensure_ascii=False, separators=(",", ":")))
     return 0
 
 
@@ -47,6 +48,10 @@ def cmd_all(args: argparse.Namespace) -> int:
 
     path = Path(args.path)
     langs = detect_langs(path)
+    fail_on = getattr(args, "fail_on", "never")
+    if fail_on != "never" and not getattr(args, "json", False):
+        print("codescan all: --fail-on requires --json", file=sys.stderr)
+        return 2
     if getattr(args, "json", False):
         sensors = []
         _, payload, _ = secrets_payload(path)
@@ -73,13 +78,15 @@ def cmd_all(args: argparse.Namespace) -> int:
         _, payload, _ = arch_payload(path, args.target)
         sensors.append(payload)
         summary = _summary_payload(sensors)
+        findings = _findings_total(summary)
+        status = "degraded" if summary["errors"] else "findings" if findings else "ok"
         print(
             json.dumps(
                 {
                     "command": "all",
                     "schema_version": 1,
                     "path": str(path),
-                    "status": "ok" if summary["errors"] == 0 else "degraded",
+                    "status": status,
                     "summary": summary,
                     "sensors": sensors,
                 },
@@ -87,6 +94,10 @@ def cmd_all(args: argparse.Namespace) -> int:
                 ensure_ascii=False,
             )
         )
+        if summary["errors"] and fail_on in ("errors", "findings"):
+            return 2
+        if findings and fail_on == "findings":
+            return 1
         return 0
     print(f"#### codescan all on {path} ####\n")
     _run_sensor(cmd_secrets, args, "secrets")
@@ -180,6 +191,19 @@ def _summary_payload(sensor_payloads: list[dict]) -> dict[str, int]:
     return summary
 
 
+def _findings_total(summary: dict[str, int]) -> int:
+    """Count actionable findings without treating skips or sensor errors as findings."""
+    finding_keys = (
+        "secrets",
+        "sast_findings",
+        "dead_items",
+        "lint_findings",
+        "type_diagnostics",
+        "arch_violations",
+    )
+    return sum(summary[key] for key in finding_keys)
+
+
 def _cmd_dead(args: argparse.Namespace) -> int:
     """Dead-code dispatch: auto-detect languages, run appropriate sensors."""
     from codescan.shared.runner import detect_langs
@@ -227,6 +251,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Code-quality sensor orchestrator (semgrep/gitleaks/vulture/knip/dep-cruiser).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    ap.add_argument("--version", action="version", version=f"codescan {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     # list
@@ -236,6 +261,11 @@ def _build_parser() -> argparse.ArgumentParser:
     capabilities_parser = sub.add_parser(
         "capabilities",
         help="emit machine-readable sensor capability metadata",
+    )
+    capabilities_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="accepted for uniform router invocation; output is always JSON",
     )
     capabilities_parser.set_defaults(func=cmd_capabilities)
 
@@ -314,6 +344,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="type checker for Python projects (default: auto)",
     )
     all_parser.add_argument("--json", action="store_true", help="emit compact JSON")
+    all_parser.add_argument(
+        "--fail-on",
+        choices=["never", "errors", "findings"],
+        default="never",
+        help="JSON mode exit policy: never (default), sensor errors, or any finding",
+    )
     all_parser.set_defaults(func=cmd_all)
 
     return ap
