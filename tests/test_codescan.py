@@ -127,6 +127,12 @@ def test_codescan_dead_no_substring_exclude_false_positive(tmp_path: Path) -> No
     )
 
 
+def test_archived_harness_code_is_not_quality_gate_input() -> None:
+    from codescan.sensors.vulture_sensor import _vulture_excludes
+
+    assert "*/_archive/*" in _vulture_excludes({})
+
+
 def test_codescan_dead_respects_vulture_pyproject(tmp_path: Path) -> None:
     """codescan must pass the nearest pyproject.toml to vulture."""
     (tmp_path / "pyproject.toml").write_text(
@@ -431,6 +437,33 @@ def test_type_sensor_uses_scanned_project_as_working_directory(monkeypatch, tmp_
 
     assert rc == 0
     assert payload["counts"]["diagnostics"] == 0
+    assert captured["cwd"] == tmp_path
+
+
+def test_type_sensor_honors_project_pyright_scope(monkeypatch, tmp_path: Path) -> None:
+    """A directory config owns include/exclude; do not override it with a path arg."""
+    import codescan.sensors.type_sensor as sensor
+
+    config = tmp_path / "pyrightconfig.json"
+    config.write_text('{"include":["src"],"exclude":["vendor"]}\n', encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_run(command, *, cwd=None, timeout=None):
+        del timeout
+        captured.update(command=command, cwd=cwd)
+        return 0, '{"generalDiagnostics":[]}', ""
+
+    monkeypatch.setattr(sensor, "run", fake_run)
+    rc, payload, _ = sensor._pyright_payload(tmp_path, include_findings=False)
+
+    assert rc == 0
+    assert payload["counts"]["diagnostics"] == 0
+    assert captured["command"] == [
+        "pyright",
+        "--project",
+        str(config),
+        "--outputjson",
+    ]
     assert captured["cwd"] == tmp_path
 
 

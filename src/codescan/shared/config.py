@@ -27,6 +27,7 @@ VENDOR_EXCLUDES: list[str] = [
 # Harness/runtime trees that are neither project source nor safe secret-scan
 # inputs. Keep known credential stores out of gitleaks separately below.
 RUNTIME_EXCLUDES: list[str] = [
+    "_archive",
     ".memory-bank",
     ".ssh",
     "delegations",

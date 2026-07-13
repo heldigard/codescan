@@ -26,9 +26,17 @@ def _select_tool(tool: str) -> str | None:
     return None
 
 
+def _pyright_command(path: Path) -> list[str]:
+    """Honor a project config instead of overriding its include/exclude scope."""
+    config = path / "pyrightconfig.json" if path.is_dir() else None
+    if config is not None and config.is_file():
+        return ["pyright", "--project", str(config), "--outputjson"]
+    return ["pyright", str(path), "--outputjson"]
+
+
 def _pyright_payload(path: Path, include_findings: bool) -> tuple[int, dict[str, Any], str]:
     workdir = path if path.is_dir() else path.parent
-    rc, out, err = run(["pyright", str(path), "--outputjson"], cwd=workdir)
+    rc, out, err = run(_pyright_command(path), cwd=workdir)
     payload: dict[str, Any] = {
         "command": "type",
         "schema_version": 1,
