@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from codescan import __version__
 from codescan.capabilities import capabilities_payload
@@ -53,13 +54,17 @@ def cmd_all(args: argparse.Namespace) -> int:
     if fail_on != "never" and not getattr(args, "json", False):
         print("codescan all: --fail-on requires --json", file=sys.stderr)
         return 2
+    offline = bool(getattr(args, "offline", False))
     if getattr(args, "json", False):
         include = not getattr(args, "summary_only", False)
         sensors = []
         _, payload, _ = secrets_payload(path, include_findings=include)
         sensors.append(payload)
-        _, payload, _ = sec_payload(path, args.config, include_findings=include)
-        sensors.append(payload)
+        if offline:
+            sensors.append(_offline_skip_payload(path, "sec", "semgrep"))
+        else:
+            _, payload, _ = sec_payload(path, args.config, include_findings=include)
+            sensors.append(payload)
         sensors.extend(_dead_payloads(path, langs, args.min_confidence, include_findings=include))
         if "py" in langs:
             _, payload, _ = lint_payload(path, include_findings=include)
@@ -78,6 +83,7 @@ def cmd_all(args: argparse.Namespace) -> int:
                     "schema_version": 1,
                     "path": str(path),
                     "status": status,
+                    "offline": offline,
                     "summary": summary,
                     "sensors": sensors,
                 },
@@ -90,15 +96,40 @@ def cmd_all(args: argparse.Namespace) -> int:
         if findings and fail_on == "findings":
             return 1
         return 0
-    print(f"#### codescan all on {path} ####\n")
+    print(f"#### codescan all on {path} ####")
+    if offline:
+        print("(offline mode: skipping semgrep — the only open-world sensor)\n")
+    else:
+        print()
     _run_sensor(cmd_secrets, args, "secrets")
-    _run_sensor(cmd_sec, args, "SAST")
+    if not offline:
+        _run_sensor(cmd_sec, args, "SAST")
     _run_dead_sensors(path, langs, args.min_confidence)
     if "py" in langs:
         _run_sensor(cmd_lint, args, "lint")
         _run_sensor(cmd_type, args, "type")
     _run_sensor(cmd_arch, args, "arch")
     return 0
+
+
+def _offline_skip_payload(path: Path, command: str, sensor: str) -> dict[str, Any]:
+    """Emit a 'skipped' payload when --offline excludes a sensor.
+
+    Mirrors the `skipped` shape used by the dead-code sensors so consumers can
+    treat it uniformly (status=skipped, no counts, reason explains why).
+    """
+    return {
+        "command": command,
+        "schema_version": 1,
+        "tool": sensor,
+        "path": str(path),
+        "status": "skipped",
+        "reason": f"--offline: {sensor} is the only open-world sensor",
+        "counts": {},
+        "findings": [],
+        "findings_omitted": True,
+        "truncated": False,
+    }
 
 
 def _run_dead_sensors(path: Path, langs: set[str], min_confidence: int | None) -> int:
@@ -327,6 +358,11 @@ def _build_parser() -> argparse.ArgumentParser:
     arch_parser = sub.add_parser("arch", help="architecture/import rules (dependency-cruiser)")
     _add_path(arch_parser)
     arch_parser.add_argument("target", nargs="?", default="src", help="entry to cruise")
+    arch_parser.add_argument(
+        "--init",
+        action="store_true",
+        help="write a starter .dependency-cruiser.cjs; refuses to overwrite",
+    )
     arch_parser.add_argument("--json", action="store_true", help="emit compact JSON")
     arch_parser.set_defaults(func=cmd_arch)
 
@@ -359,6 +395,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["never", "errors", "findings"],
         default="never",
         help="JSON mode exit policy: never (default), sensor errors, or any finding",
+    )
+    all_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="skip semgrep (the only open-world sensor); much faster, sandboxed",
     )
     all_parser.set_defaults(func=cmd_all)
 

@@ -735,6 +735,40 @@ def test_codescan_type_resolves_relative_subdir(tmp_path: Path) -> None:
     assert payload["status"] != "error", f"relative path doubled: {payload}"
 
 
+def test_codescan_arch_init_creates_starter(tmp_path: Path) -> None:
+    """codescan arch --init writes a starter config; second call refuses to overwrite."""
+    r1 = run(["codescan", "arch", "--init", "-p", str(tmp_path)], check=False)
+    assert r1.returncode == 0, f"init failed: {r1.stderr}"
+    assert "wrote:" in r1.stdout, r1.stdout
+    starter = tmp_path / ".dependency-cruiser.cjs"
+    assert starter.is_file(), "starter config was not written"
+    body = starter.read_text()
+    assert "dependency-cruiser" in body, "missing dependency-cruiser header"
+    assert "doNotFollow" in body, "missing doNotFollow vendor excludes"
+    assert "no-cross-feature-imports" in body, "missing vertical-slice rule"
+
+    r2 = run(["codescan", "arch", "--init", "-p", str(tmp_path)], check=False)
+    assert r2.returncode == 1, "second --init must refuse to overwrite"
+    assert "exists, not overwritten" in r2.stderr, r2.stderr
+
+
+def test_codescan_all_offline_skips_semgrep(tmp_path: Path) -> None:
+    """codescan all --offline --json must skip sec and emit a 'skipped' payload for it."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='s'\nversion='0'\n")
+    (tmp_path / "app.py").write_text("import os\ndef live(): return os.getcwd()\n")
+    r = run(
+        ["codescan", "all", "-p", str(tmp_path), "--offline", "--json", "--summary-only"],
+        check=False,
+    )
+    assert r.returncode == 0, f"offline run failed: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["offline"] is True
+    sec = next(s for s in payload["sensors"] if s.get("command") == "sec")
+    assert sec["status"] == "skipped", sec
+    assert "open-world" in sec.get("reason", ""), sec
+    assert payload["summary"]["sast_findings"] == 0
+
+
 def main() -> int:
     print("codescan orchestrator smoke test")
     run(["which", "codescan"])
@@ -753,6 +787,10 @@ def main() -> int:
         print("  codescan dead (no substring-exclude false positive): OK")
         test_codescan_arch_skips_without_config(proj)
         print("  codescan arch (skip without config): OK")
+        test_codescan_arch_init_creates_starter(proj)
+        print("  codescan arch --init: OK")
+        test_codescan_all_offline_skips_semgrep(proj)
+        print("  codescan all --offline: OK")
 
     print("\n✅ all codescan checks passed")
     return 0

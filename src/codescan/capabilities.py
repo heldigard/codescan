@@ -89,6 +89,7 @@ CAPABILITIES: tuple[dict[str, Any], ...] = (
         "destructive": False,
         "idempotent": True,
         "open_world": True,
+        "open_world_when_offline": False,
         "structured_json": True,
         "external_tools": (
             "gitleaks",
@@ -102,6 +103,7 @@ CAPABILITIES: tuple[dict[str, Any], ...] = (
         ),
         "cost": "expensive",
         "ci_exit_policies": ("never", "errors", "findings"),
+        "offline_skiplist": ("sec",),  # semgrep is the only open-world sensor
     },
     {
         "name": "capabilities",
