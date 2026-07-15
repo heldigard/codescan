@@ -489,7 +489,14 @@ def test_type_sensor_honors_project_pyright_scope(monkeypatch, tmp_path: Path) -
 
 def test_codescan_arch_json_skips_without_config(tmp_path: Path) -> None:
     """JSON mode should encode expected arch skips instead of forcing stderr scraping."""
-    r = run(["codescan", "arch", "-p", str(tmp_path), "--json"], check=False)
+    # Self-contained: a fake depcruise on PATH makes have() True so the sensor
+    # reaches the no-config skip path without requiring a real install.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_bin(bin_dir, "depcruise", "exit 0\n")
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    r = run(["codescan", "arch", "-p", str(tmp_path), "--json"], check=False, env=env)
 
     assert r.returncode == 0, f"arch json skip failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
@@ -509,6 +516,9 @@ def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
     fake_bin(bin_dir, "semgrep", "printf '%s\\n' '{\"results\":[]}'\n")
     fake_bin(bin_dir, "ruff", "printf '[]\\n'\n")
     fake_bin(bin_dir, "pyright", "printf '%s\\n' '{\"generalDiagnostics\":[]}'\n")
+    fake_bin(
+        bin_dir, "depcruise", "exit 0\n"
+    )  # present so arch skips (no config), not missing_tool
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
@@ -582,6 +592,7 @@ def test_codescan_all_fail_on_errors_distinguishes_sensor_failure(tmp_path: Path
     fake_bin(bin_dir, "semgrep", "printf 'sensor unavailable\\n' >&2\nexit 2\n")
     fake_bin(bin_dir, "ruff", "printf '[]\\n'\n")
     fake_bin(bin_dir, "pyright", "printf '%s\\n' '{\"generalDiagnostics\":[]}'\n")
+    fake_bin(bin_dir, "depcruise", "exit 0\n")  # present so arch skips, not missing_tool
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
 
@@ -609,7 +620,14 @@ def test_codescan_all_fail_on_errors_distinguishes_sensor_failure(tmp_path: Path
 def test_codescan_arch_skips_without_config(tmp_path: Path) -> None:
     """dependency-cruiser must SKIP cleanly (exit 1, not crash) when the project
     has no .dependency-cruiser.cjs — never auto-generate one."""
-    r = run(["codescan", "arch", "-p", str(tmp_path)], check=False)
+    # Self-contained: fake depcruise so have() is True and the sensor reaches the
+    # no-config skip path without requiring a real install.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_bin(bin_dir, "depcruise", "exit 0\n")
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    r = run(["codescan", "arch", "-p", str(tmp_path)], check=False, env=env)
     assert r.returncode == 1, f"arch should exit 1 without config, got {r.returncode}"
     assert "no .dependency-cruiser" in r.stderr.lower(), f"arch should explain the skip: {r.stderr}"
 

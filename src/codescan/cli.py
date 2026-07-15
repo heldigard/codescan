@@ -151,6 +151,7 @@ def _dead_payloads(
                 "reason": "no Python/JS/TS project detected",
                 "counts": {"items": 0},
                 "findings": [],
+                "findings_omitted": not include_findings,
                 "truncated": False,
             }
         )
