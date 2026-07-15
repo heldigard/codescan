@@ -23,6 +23,24 @@ def _finding_payload(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _run_semgrep(path_s: str, cfg: str) -> tuple[int, str, str]:
+    """Run semgrep with the vendor-exclude flags, return (rc, stdout, stderr)."""
+    exclude_args = [item for token in SCAN_EXCLUDES for item in ("--exclude", f"**/{token}/**")]
+    return run(
+        [
+            "semgrep",
+            "scan",
+            "--config",
+            cfg,
+            "--json",
+            "--quiet",
+            "--disable-version-check",
+            *exclude_args,
+            path_s,
+        ]
+    )
+
+
 def sec_payload(
     path: Path, config: str | None, *, include_findings: bool = True
 ) -> tuple[int, dict[str, Any], str]:
@@ -45,22 +63,7 @@ def sec_payload(
         payload["status"] = "missing_tool"
         payload["error"] = "semgrep not installed"
         return 2, payload, "semgrep not installed (pip3 install --user semgrep)"
-    exclude_args = [
-        item for token in SCAN_EXCLUDES for item in ("--exclude", f"**/{token}/**")
-    ]
-    rc, out, err = run(
-        [
-            "semgrep",
-            "scan",
-            "--config",
-            cfg,
-            "--json",
-            "--quiet",
-            "--disable-version-check",
-            *exclude_args,
-            path_s,
-        ]
-    )
+    rc, out, err = _run_semgrep(path_s, cfg)
     if rc != 0 and not out.strip():
         payload["status"] = "error"
         payload["error"] = err.strip()
@@ -94,14 +97,15 @@ def cmd_sec(args: argparse.Namespace) -> int:
     path = str(Path(args.path))
     include_findings = not getattr(args, "summary_only", False)
     rc, payload, error = sec_payload(Path(path), cfg, include_findings=include_findings)
+    if getattr(args, "json", False):
+        # --json always emits a parseable payload (status carries the outcome).
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0 if payload["status"] in ("ok", "skipped") else rc
     if payload["status"] == "missing_tool":
         die("semgrep not installed (pip3 install --user semgrep)", 2)
     if payload["status"] == "error":
         print(error, file=sys.stderr)
         return rc
-    if getattr(args, "json", False):
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return 0
     print(f"== semgrep SAST on {path} (config={cfg}) ==")
     counts_map = payload["counts"]["by_severity"]
     counts = "  ".join(f"{k}:{v}" for k, v in sorted(counts_map.items()))

@@ -8,7 +8,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from codescan.shared.config import SCAN_EXCLUDES
+from codescan.shared.config import SCAN_EXCLUDES, UNSAFE_PATH_EXCLUDES
 from codescan.shared.runner import find_upward, have, print_topn, run
 
 _DEFAULT_MIN_CONFIDENCE = 60
@@ -57,12 +57,11 @@ _FRAMEWORK_CALLBACK_NAMES = [
     "resume_writing",
     "connection_failed",
 ]
-# Tokens that collide with OS-standard absolute paths (/tmp, /var/tmp) which
-# vulture resolves to. Segment-anchoring cannot rescue these: */tmp/* matches
-# every path under /tmp/, blinding the sensor under pytest's tmp_path and CI.
-# Strip them entirely; the substring-artifact tokens (out/env/build/dist/target)
-# are handled by segment-anchoring in _vulture_excludes instead.
-_VULTURE_UNSAFE_EXCLUDES = {"tmp", "temp"}
+# Tokens that collide with OS-standard absolute paths (/tmp, /var/tmp) live in
+# UNSAFE_PATH_EXCLUDES (shared/config.py); segment-anchoring cannot rescue
+# them, so they are dropped entirely in _vulture_excludes. The
+# substring-artifact tokens (out/env/build/dist/target) are handled by
+# segment-anchoring in _vulture_excludes instead.
 
 
 def _vulture_settings(config: Path | None) -> dict:
@@ -98,7 +97,7 @@ def _vulture_excludes(settings: dict) -> list[str]:
     """
     excludes: list[str] = []
     for token in SCAN_EXCLUDES:
-        if token in _VULTURE_UNSAFE_EXCLUDES:
+        if token in UNSAFE_PATH_EXCLUDES:
             continue
         excludes.append(f"*/{token}/*")
         excludes.append(f"{token}/*")
@@ -204,7 +203,9 @@ def _vulture_command(
     return command, effective_confidence, list(_FRAMEWORK_CALLBACK_NAMES)
 
 
-def dead_py_payload(path: Path, min_confidence: int | None) -> tuple[int, dict[str, Any], str]:
+def dead_py_payload(
+    path: Path, min_confidence: int | None, *, include_findings: bool = True
+) -> tuple[int, dict[str, Any], str]:
     """Return the vulture result payload without printing."""
     payload: dict[str, Any] = {
         "command": "dead",
@@ -215,6 +216,7 @@ def dead_py_payload(path: Path, min_confidence: int | None) -> tuple[int, dict[s
         "status": "ok",
         "counts": {"items": 0},
         "findings": [],
+        "findings_omitted": not include_findings,
         "truncated": False,
     }
     if not have("vulture"):
@@ -230,12 +232,13 @@ def dead_py_payload(path: Path, min_confidence: int | None) -> tuple[int, dict[s
         payload["error"] = err.strip()
         return 2, payload, err.strip()
     lines = _drop_callback_findings(lines, callbacks)
-    findings = [_finding_payload(line) for line in lines[:40]]
+    findings = [_finding_payload(line) for line in lines[:40]] if include_findings else []
     payload.update(
         {
             "counts": {"items": len(lines)},
             "findings": findings,
-            "truncated": len(lines) > len(findings),
+            "findings_omitted": not include_findings,
+            "truncated": include_findings and len(lines) > len(findings),
         }
     )
     return 0, payload, ""
@@ -250,10 +253,7 @@ def cmd_dead_py(path: Path, min_confidence: int | None) -> int:
     if payload["status"] == "error":
         print(f"vulture error: {error}", file=sys.stderr)
         return rc
-    print(
-        "== vulture "
-        f"(Python dead code, min-confidence {payload['min_confidence']}) on {path} =="
-    )
+    print(f"== vulture (Python dead code, min-confidence {payload['min_confidence']}) on {path} ==")
     print(f"items: {payload['counts']['items']}")
     print_topn([str(item.get("text", "")) for item in payload["findings"]])
     return 0

@@ -1,4 +1,5 @@
 """ruff lint sensor."""
+
 from __future__ import annotations
 
 import argparse
@@ -83,14 +84,15 @@ def cmd_lint(args: argparse.Namespace) -> int:
     path = Path(args.path)
     include_findings = not getattr(args, "summary_only", False)
     rc, payload, error = lint_payload(path, include_findings=include_findings)
+    if getattr(args, "json", False):
+        # --json always emits a parseable payload (status carries the outcome).
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0 if payload["status"] in ("ok", "skipped") else rc
     if payload["status"] == "missing_tool":
         die("ruff not installed (pip install --user ruff)", 2)
     if payload["status"] == "error":
         print(error, file=sys.stderr)
         return rc
-    if getattr(args, "json", False):
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return 0
 
     print(f"== ruff lint on {path} ==")
     counts = payload["counts"]["by_code"]

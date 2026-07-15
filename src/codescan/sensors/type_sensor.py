@@ -1,4 +1,5 @@
 """Python type-check sensor (pyright preferred, mypy fallback)."""
+
 from __future__ import annotations
 
 import argparse
@@ -31,7 +32,10 @@ def _pyright_command(path: Path) -> list[str]:
     config = path / "pyrightconfig.json" if path.is_dir() else None
     if config is not None and config.is_file():
         return ["pyright", "--project", str(config), "--outputjson"]
-    return ["pyright", str(path), "--outputjson"]
+    # Resolve to absolute: the caller also ``cd``s into this directory, so a
+    # relative dir arg would re-resolve against itself (``src`` -> ``src/src``)
+    # and pyright would error on a non-existent path.
+    return ["pyright", str(path.resolve()), "--outputjson"]
 
 
 def _pyright_payload(path: Path, include_findings: bool) -> tuple[int, dict[str, Any], str]:
@@ -90,8 +94,10 @@ def _pyright_payload(path: Path, include_findings: bool) -> tuple[int, dict[str,
 
 def _mypy_payload(path: Path, include_findings: bool) -> tuple[int, dict[str, Any], str]:
     workdir = path if path.is_dir() else path.parent
+    # Absolute arg: cwd is also this directory, so a relative dir would
+    # re-resolve against itself (src -> src/src). See _pyright_command.
     rc, out, err = run(
-        ["mypy", "--show-error-codes", "--no-error-summary", str(path)], cwd=workdir
+        ["mypy", "--show-error-codes", "--no-error-summary", str(path.resolve())], cwd=workdir
     )
     payload: dict[str, Any] = {
         "command": "type",
@@ -169,14 +175,15 @@ def cmd_type(args: argparse.Namespace) -> int:
         getattr(args, "tool", getattr(args, "type_tool", "auto")),
         include_findings=include_findings,
     )
+    if getattr(args, "json", False):
+        # --json always emits a parseable payload (status carries the outcome).
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0 if payload["status"] in ("ok", "skipped") else rc
     if payload["status"] == "missing_tool":
         die(error, 2)
     if payload["status"] == "error":
         print(error, file=sys.stderr)
         return rc
-    if getattr(args, "json", False):
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return 0
 
     print(f"== {payload['tool']} type check on {path} ==")
     counts = payload["counts"]["by_severity"]

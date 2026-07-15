@@ -1,4 +1,5 @@
 """codescan CLI — entry point for the code-quality sensor orchestrator."""
+
 from __future__ import annotations
 
 import argparse
@@ -53,29 +54,19 @@ def cmd_all(args: argparse.Namespace) -> int:
         print("codescan all: --fail-on requires --json", file=sys.stderr)
         return 2
     if getattr(args, "json", False):
+        include = not getattr(args, "summary_only", False)
         sensors = []
-        _, payload, _ = secrets_payload(path)
+        _, payload, _ = secrets_payload(path, include_findings=include)
         sensors.append(payload)
-        _, payload, _ = sec_payload(
-            path,
-            args.config,
-            include_findings=not getattr(args, "summary_only", False),
-        )
+        _, payload, _ = sec_payload(path, args.config, include_findings=include)
         sensors.append(payload)
-        sensors.extend(_dead_payloads(path, langs, args.min_confidence))
+        sensors.extend(_dead_payloads(path, langs, args.min_confidence, include_findings=include))
         if "py" in langs:
-            _, payload, _ = lint_payload(
-                path,
-                include_findings=not getattr(args, "summary_only", False),
-            )
+            _, payload, _ = lint_payload(path, include_findings=include)
             sensors.append(payload)
-            _, payload, _ = type_payload(
-                path,
-                args.type_tool,
-                include_findings=not getattr(args, "summary_only", False),
-            )
+            _, payload, _ = type_payload(path, args.type_tool, include_findings=include)
             sensors.append(payload)
-        _, payload, _ = arch_payload(path, args.target)
+        _, payload, _ = arch_payload(path, args.target, include_findings=include)
         sensors.append(payload)
         summary = _summary_payload(sensors)
         findings = _findings_total(summary)
@@ -131,17 +122,23 @@ def _run_dead_sensors(path: Path, langs: set[str], min_confidence: int | None) -
     return 0
 
 
-def _dead_payloads(path: Path, langs: set[str], min_confidence: int | None) -> list[dict]:
+def _dead_payloads(
+    path: Path,
+    langs: set[str],
+    min_confidence: int | None,
+    *,
+    include_findings: bool = True,
+) -> list[dict]:
     """Run applicable dead-code sensors and return their payloads."""
     from codescan.sensors.knip_sensor import dead_js_payload
     from codescan.sensors.vulture_sensor import dead_py_payload
 
     payloads: list[dict] = []
     if "py" in langs:
-        _, payload, _ = dead_py_payload(path, min_confidence)
+        _, payload, _ = dead_py_payload(path, min_confidence, include_findings=include_findings)
         payloads.append(payload)
     if "js" in langs or "ts" in langs:
-        _, payload, _ = dead_js_payload(path)
+        _, payload, _ = dead_js_payload(path, include_findings=include_findings)
         payloads.append(payload)
     if not payloads:
         payloads.append(
@@ -240,6 +237,9 @@ def _add_path(p: argparse.ArgumentParser) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argument parser with all subcommands."""
+    # vs-soft-allow — argparse subparser tree; one responsibility (CLI surface),
+    # splitting per-subcommand only scatters a flat declarative spec and hurts
+    # readability/scan-ability.
     from codescan.sensors.depcruiser_sensor import cmd_arch
     from codescan.sensors.gitleaks_sensor import cmd_secrets
     from codescan.sensors.ruff_sensor import cmd_lint
@@ -273,11 +273,16 @@ def _build_parser() -> argparse.ArgumentParser:
     dead_parser = sub.add_parser("dead", help="dead code (vulture py / knip ts,js)")
     _add_path(dead_parser)
     dead_parser.add_argument(
-        "-l", "--lang", default=None, choices=["py", "js", "ts"],
+        "-l",
+        "--lang",
+        default=None,
+        choices=["py", "js", "ts"],
         help="force language (default: auto-detect)",
     )
     dead_parser.add_argument(
-        "--min-confidence", type=int, default=None,
+        "--min-confidence",
+        type=int,
+        default=None,
         help="vulture min confidence (default: tool.vulture config, else 60)",
     )
     dead_parser.add_argument("--json", action="store_true", help="emit compact JSON")
@@ -330,11 +335,15 @@ def _build_parser() -> argparse.ArgumentParser:
     all_parser.add_argument("-c", "--config", default=None, help="semgrep config (default: auto)")
     all_parser.add_argument("--summary-only", action="store_true", help="semgrep counts only")
     all_parser.add_argument(
-        "--min-confidence", type=int, default=None,
+        "--min-confidence",
+        type=int,
+        default=None,
         help="vulture min confidence (default: tool.vulture config, else 60)",
     )
     all_parser.add_argument(
-        "--arch-target", dest="target", default="src",
+        "--arch-target",
+        dest="target",
+        default="src",
         help="dependency-cruiser entry to cruise (default: src)",
     )
     all_parser.add_argument(

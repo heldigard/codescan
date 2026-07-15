@@ -27,7 +27,9 @@ def _root_for(path: Path) -> Path:
     )
 
 
-def arch_payload(path: Path, target: str | None) -> tuple[int, dict[str, Any], str]:
+def arch_payload(
+    path: Path, target: str | None, *, include_findings: bool = True
+) -> tuple[int, dict[str, Any], str]:
     """Return the dependency-cruiser result payload without printing."""
     tool = "depcruise" if have("depcruise") else "dependency-cruiser"
     payload: dict[str, Any] = {
@@ -38,6 +40,7 @@ def arch_payload(path: Path, target: str | None) -> tuple[int, dict[str, Any], s
         "status": "ok",
         "counts": {"violations": 0},
         "findings": [],
+        "findings_omitted": not include_findings,
         "truncated": False,
     }
     if not have(tool):
@@ -62,12 +65,13 @@ def arch_payload(path: Path, target: str | None) -> tuple[int, dict[str, Any], s
         payload["status"] = "error"
         payload["error"] = err.strip()
         return 2, payload, err.strip()
-    findings = [{"text": line} for line in lines[:40]]
+    findings = [{"text": line} for line in lines[:40]] if include_findings else []
     payload.update(
         {
             "counts": {"violations": len(lines)},
             "findings": findings,
-            "truncated": len(lines) > len(findings),
+            "findings_omitted": not include_findings,
+            "truncated": include_findings and len(lines) > len(findings),
         }
     )
     return 0, payload, ""

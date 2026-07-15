@@ -44,8 +44,10 @@ def test_codescan_list() -> None:
 
 
 def test_codescan_version() -> None:
+    from codescan import __version__
+
     r = run(["codescan", "--version"])
-    assert r.stdout.strip() == "codescan 1.1.0"
+    assert r.stdout.strip() == f"codescan {__version__}", r.stdout
 
 
 def test_codescan_capabilities_contract() -> None:
@@ -292,9 +294,27 @@ def test_codescan_secrets_json_is_compact_and_redacted(tmp_path: Path) -> None:
     assert payload["command"] == "secrets"
     assert payload["redacted"] is True
     assert payload["counts"]["leaks"] == 1
-    assert payload["findings"] == [
-        {"rule_id": "generic-api-key", "file": "app.py", "line": 7}
-    ]
+    assert payload["findings"] == [{"rule_id": "generic-api-key", "file": "app.py", "line": 7}]
+
+
+def test_codescan_secrets_error_when_gitleaks_signals_leaks_unparseable(tmp_path: Path) -> None:
+    """gitleaks exit 1 means leaks found. If the report did not parse, codescan
+    must surface an error rather than report a silent clean 0 leaks
+    (false-negative). Regression for the rc==1-without-findings path."""
+    bin_dir = tmp_path / "bin"
+    project = tmp_path / "project"
+    bin_dir.mkdir()
+    project.mkdir()
+    fake_bin(bin_dir, "gitleaks", "printf 'not-json\\n'\nexit 1\n")
+
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    r = run(["codescan", "secrets", "-p", str(project), "--json"], check=False, env=env)
+
+    assert r.returncode == 2, f"secrets should error: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "error"
+    assert payload["counts"]["leaks"] == 0
 
 
 def test_codescan_sec_json_is_compact(tmp_path: Path) -> None:
@@ -307,9 +327,9 @@ def test_codescan_sec_json_is_compact(tmp_path: Path) -> None:
         bin_dir,
         "semgrep",
         "printf '%s\\n' "
-        "'{\"results\":[{\"check_id\":\"python.lang.security.audit.dynamic-urllib-use-detected\","
-        "\"path\":\"app.py\",\"start\":{\"line\":12},"
-        "\"extra\":{\"severity\":\"WARNING\",\"message\":\"dynamic urllib\"}}]}'\n",
+        '\'{"results":[{"check_id":"python.lang.security.audit.dynamic-urllib-use-detected",'
+        '"path":"app.py","start":{"line":12},'
+        '"extra":{"severity":"WARNING","message":"dynamic urllib"}}]}\'\n',
     )
 
     env = os.environ.copy()
@@ -358,8 +378,8 @@ def test_codescan_lint_json_is_compact(tmp_path: Path) -> None:
         bin_dir,
         "ruff",
         "printf '%s\\n' "
-        "'[{\"code\":\"F401\",\"filename\":\"app.py\","
-        "\"location\":{\"row\":3},\"message\":\"imported but unused\"}]'\n",
+        '\'[{"code":"F401","filename":"app.py",'
+        '"location":{"row":3},"message":"imported but unused"}]\'\n',
     )
 
     env = os.environ.copy()
@@ -391,9 +411,9 @@ def test_codescan_type_json_pyright_is_compact(tmp_path: Path) -> None:
         bin_dir,
         "pyright",
         "printf '%s\\n' "
-        "'{\"generalDiagnostics\":[{\"severity\":\"error\",\"file\":\"app.py\","
-        "\"range\":{\"start\":{\"line\":4}},\"message\":\"not assignable\","
-        "\"rule\":\"reportAssignmentType\"}]}'\n"
+        '\'{"generalDiagnostics":[{"severity":"error","file":"app.py",'
+        '"range":{"start":{"line":4}},"message":"not assignable",'
+        '"rule":"reportAssignmentType"}]}\'\n'
         "exit 1\n",
     )
 
@@ -517,6 +537,13 @@ def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
     }
     sec_sensor = next(sensor for sensor in payload["sensors"] if sensor["command"] == "sec")
     assert sec_sensor["findings_omitted"] is True
+    # --summary-only must omit findings across EVERY actionable sensor, not
+    # just sec/lint/type. Regression: secrets/dead/arch used to ignore it.
+    for cmd in ("secrets", "sec", "dead", "lint", "type", "arch"):
+        sensor = next(s for s in payload["sensors"] if s["command"] == cmd)
+        assert sensor.get("findings_omitted") is True, (
+            f"{cmd} did not honor --summary-only: {sensor}"
+        )
 
     gated = run(
         [
@@ -622,6 +649,72 @@ def test_codescan_arch_uses_js_config_and_project_root(tmp_path: Path) -> None:
     assert r.returncode == 0, f"arch sensor failed: stdout={r.stdout} stderr={r.stderr}"
     assert f"warn cwd={project}" in r.stdout, f"depcruise ran from wrong cwd: {r.stdout}"
     assert ".dependency-cruiser.js" in r.stdout, f"arch did not pass JS config: {r.stdout}"
+
+
+def test_gitleaks_allowlist_drops_tmp_temp_collision() -> None:
+    """tmp/temp tokens collide with OS-standard absolute paths (/tmp, /var/tmp).
+
+    gitleaks resolves ``--source`` to an absolute path and matches allowlist
+    ``paths`` against it, so a ``(^|/)tmp(/|$)`` token blanks every file under
+    /tmp — pytest ``tmp_path``, CI temp dirs, manual ``/tmp/...`` work — and
+    real secrets go undetected (false-negative). Regression: those tokens must
+    be absent from the generated config while real vendor excludes remain.
+    """
+    import re as path_re
+    import tomllib
+
+    from codescan.sensors.gitleaks_sensor import _gitleaks_allowlist_config
+
+    data = tomllib.loads(_gitleaks_allowlist_config())
+    patterns = [path_re.compile(p) for p in data["allowlist"]["paths"]]
+    for victim in ("/tmp/work/secret.txt", "/var/tmp/work/secret.txt"):
+        assert not any(pat.search(victim) for pat in patterns), (
+            f"OS temp path allowlisted (would blank scans under it): {victim}"
+        )
+    assert any(pat.search("/proj/node_modules/leak.js") for pat in patterns), (
+        "vendor exclude dropped with tmp/temp"
+    )
+
+
+def test_codescan_secrets_detects_leak_under_tmp(tmp_path: Path) -> None:
+    """End-to-end regression: a real secret under /tmp (pytest tmp_path) must be
+    detected. Before the allowlist fix, the tmp/temp token blanked the whole
+    scan under /tmp (gitleaks reported "scanned ~0 bytes", 0 leaks)."""
+    if not shutil.which("gitleaks"):
+        pytest.skip("gitleaks not installed")
+    # Assemble at runtime so no continuous secret literal lives in source
+    # (keeps repo push-protection clean); gitleaks still scans the written file.
+    token = (
+        "xoxb-" + ("1234567890123") + "-" + ("0987654321098") + "-" + ("abcdefghij1234567890abcd")
+    )
+    (tmp_path / "slack.txt").write_text(token + "\n", encoding="utf-8")
+
+    r = run(["codescan", "secrets", "-p", str(tmp_path), "--json"], check=False)
+
+    assert r.returncode == 0, f"secrets failed: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["counts"]["leaks"] >= 1, f"secret under /tmp missed: {r.stdout}"
+
+
+def test_codescan_type_resolves_relative_subdir(tmp_path: Path) -> None:
+    """Relative -p dir must not double-resolve against its own cwd.
+
+    Regression: the type sensor ``cd``s into the target dir AND passed the dir
+    as the tool arg, so a relative dir re-resolved against itself (``src`` ->
+    ``src/src``). pyright/mypy errored on the non-existent path and --json
+    emitted nothing — silently breaking the documented ``codescan all -p src``.
+    """
+    if not shutil.which("pyright") and not shutil.which("mypy"):
+        pytest.skip("pyright/mypy not installed")
+    sub = tmp_path / "relsub"
+    sub.mkdir()
+    (sub / "app.py").write_text("x: int = 1\n", encoding="utf-8")
+
+    r = run(["codescan", "type", "-p", "relsub", "--json"], cwd=tmp_path, check=False)
+
+    assert r.returncode == 0, f"type rel failed: stdout={r.stdout} stderr={r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["status"] != "error", f"relative path doubled: {payload}"
 
 
 def main() -> int:
