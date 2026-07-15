@@ -125,7 +125,12 @@ def _has_py_markers(p: Path) -> bool:
 
 
 def detect_langs(path: Path) -> set[str]:
-    """Heuristic: which language ecosystems are present under path (depth 2)."""
+    """Heuristic: which language ecosystems are present under path.
+
+    Checks ``path`` itself and its direct child directories (depth 1) for
+    language markers (``package.json`` → js, ``pyproject.toml``/``*.py`` → py).
+    Deeper monorepo layouts are not traversed; pass the package root explicitly.
+    """
     langs: set[str] = set()
     if not path.exists():
         return langs

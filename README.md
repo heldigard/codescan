@@ -38,6 +38,26 @@ codescan all -p src/                   # run every sensor, summarize
 codescan all -p src/ --json            # compact structured handoff for routers/workers
 ```
 
+### CI / router gates
+
+`codescan all --json` is the machine-readable handoff. Combine flags to control
+how findings map to the exit code:
+
+```bash
+# Report-only (default): always exit 0, findings are advisory. Best for agent loops.
+codescan all -p src/ --json --summary-only
+
+# Fail only when a sensor is unavailable/broken (exit 2), not on findings.
+codescan all -p src/ --json --summary-only --fail-on errors
+
+# Strict quality gate: exit 1 on any finding, 2 on sensor failure.
+codescan all -p src/ --json --summary-only --fail-on findings
+```
+
+`--summary-only` omits the per-finding lists across **every** sensor
+(secrets/sec/dead/lint/type/arch) and keeps only aggregate counts — the compact
+form for routers and cheap/local model triage. `--fail-on` requires `--json`.
+
 `codescan dead` passes the nearest `pyproject.toml` to Vulture when present,
 merges project `tool.vulture` ignores with vendor excludes, and suppresses
 PEP 562 module hooks (`__getattr__`, `__dir__`) by default.
