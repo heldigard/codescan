@@ -17,6 +17,12 @@ jobs:
           python-version: "3.12"
       - name: Install package + dev tools
         run: python -m pip install -e '.[test]'
+      - name: Install Python sensors exercised by the test suite
+        # vulture/mypy are pure-pip and let the dead/type integration tests
+        # actually run in CI (was red for days: dead tests got empty stdout
+        # with no vulture). JS/gitleaks/semgrep/pyright tests use fake bins or
+        # skip when the binary is absent.
+        run: python -m pip install vulture mypy
       - name: Lint
         run: ruff check .
       - name: Run tests
