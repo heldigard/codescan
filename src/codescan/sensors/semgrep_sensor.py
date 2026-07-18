@@ -111,7 +111,8 @@ def cmd_sec(args: argparse.Namespace) -> int:
     counts = "  ".join(f"{k}:{v}" for k, v in sorted(counts_map.items()))
     total = payload["counts"]["findings"]
     print(f"findings: {total}" + (f"  {counts}" if counts else ""))
-    if payload["findings"] and not args.summary_only:
+    # getattr: cmd_all reuses this Namespace; prefer summary_only when present.
+    if payload["findings"] and not getattr(args, "summary_only", False):
         items = []
         for result in payload["findings"]:
             check = str(result.get("check_id", "?")).split(".")[-1]

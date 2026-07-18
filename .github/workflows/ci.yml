@@ -25,5 +25,7 @@ jobs:
         run: python -m pip install vulture mypy
       - name: Lint
         run: ruff check .
+      - name: Format
+        run: ruff format --check .
       - name: Run tests
         run: pytest

@@ -1,13 +1,20 @@
 """Shared configuration: vendor exclusions and sensor registry.
 
 VENDOR_EXCLUDES mirrors codeq's list — keep the two in sync.
+Source of truth for project-local vendor noise lives in both:
+  ~/codeq/src/codeq/shared/config.py  (VENDOR_EXCLUDES)
+  ~/codescan/src/codescan/shared/config.py  (this file)
+When adding a dir to either, add it to the other (or add a parity test).
 """
 
 from __future__ import annotations
 
-# Dirs excluded where a tool lets us exclude on the CLI (vulture).
-# semgrep/knip/dep-cruiser use .gitignore + their own configs.
+# Dirs excluded where a tool lets us exclude on the CLI (vulture/ruff/semgrep).
+# knip/dep-cruiser primarily honor .gitignore + their own configs.
+# Keep in parity with codeq VENDOR_EXCLUDES (facts layer) so quality scans
+# never re-open the same harness/MCP/IDE caches that codeq already drops.
 VENDOR_EXCLUDES: list[str] = [
+    # Python
     ".venv",
     "venv",
     "env",
@@ -25,6 +32,7 @@ VENDOR_EXCLUDES: list[str] = [
     ".pytype",
     "htmlcov",
     ".ipynb_checkpoints",
+    # Node / JS / TS
     "node_modules",
     "bower_components",
     "jspm_packages",
@@ -35,10 +43,12 @@ VENDOR_EXCLUDES: list[str] = [
     ".astro",
     ".gatsby",
     ".turbo",
+    ".nx",
     ".nx-cache",
     ".parcel-cache",
     ".ngc-cache",
     ".vite",
+    ".angular",
     ".eslintcache",
     ".stylelintcache",
     ".cache",
@@ -48,6 +58,18 @@ VENDOR_EXCLUDES: list[str] = [
     "coverage",
     ".nyc_output",
     ".docusaurus",
+    "storybook-static",
+    # Cloud / serverless artifacts
+    "cdk.out",
+    ".aws-sam",
+    "amplify",
+    # React Native / Expo
+    ".expo",
+    ".expo-shared",
+    ".metro",
+    # Python offline wheel cache
+    "wheelhouse",
+    # Generic build / output
     "dist",
     "build",
     "out",
@@ -57,8 +79,16 @@ VENDOR_EXCLUDES: list[str] = [
     ".vercel",
     "tmp",
     "temp",
+    # Agent harness / memory noise (not source)
+    ".memory-bank",
+    "memory-bank",
+    ".claude",
+    ".codex",
+    "file-history",
+    # JVM
     ".gradle",
     ".mvn",
+    # VCS / IDE / editors
     ".git",
     ".hg",
     ".svn",
@@ -66,6 +96,33 @@ VENDOR_EXCLUDES: list[str] = [
     ".vscode",
     ".vs",
     ".history",
+    # LSP server workspaces
+    ".jdtls-data",
+    ".metals",
+    ".gopls",
+    ".rust-analyzer",
+    ".tsserver",
+    # AI coding-assistant caches
+    ".kilocode",
+    ".cursor",
+    ".continue",
+    ".trae",
+    ".windsurf",
+    ".cline",
+    ".roo",
+    ".cody",
+    ".augment",
+    ".aider*",
+    ".codebuddy",
+    # Browser automation / MCP server caches
+    ".playwright-mcp",
+    ".chrome-devtools-mcp",
+    ".puppeteer-mcp",
+    ".browserbase-mcp",
+    ".firecrawl-mcp",
+    ".agent-browser",
+    ".puppeteer",
+    ".playwright",
 ]
 
 # Harness/runtime trees that are neither project source nor safe secret-scan

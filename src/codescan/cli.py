@@ -1,15 +1,20 @@
-"""codescan CLI — entry point for the code-quality sensor orchestrator."""
+"""codescan CLI — entry point for the code-quality sensor orchestrator.
+
+Thin surface: list/capabilities + argparse wiring. Sensor orchestration lives
+in sensors/* (one file per sensor) and all_command / dead_dispatch for multi-
+sensor flows.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-from pathlib import Path
-from typing import Any
 
 from codescan import __version__
 from codescan.capabilities import capabilities_payload
+from codescan.sensors.all_command import cmd_all
+from codescan.sensors.dead_dispatch import cmd_dead
 from codescan.shared.config import SENSORS
 from codescan.shared.runner import have, version_of
 
@@ -30,248 +35,13 @@ def cmd_capabilities(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_sensor(fn, args, label: str) -> None:
-    """Run one sensor, suppressing SystemExit from missing tools."""
-    print(f"\n----- {label} -----")
-    try:
-        fn(args)
-    except SystemExit:
-        pass
-
-
-def cmd_all(args: argparse.Namespace) -> int:
-    """Run every applicable sensor sequentially. CPU-safe (no parallel)."""
-    from codescan.sensors.depcruiser_sensor import arch_payload, cmd_arch
-    from codescan.sensors.gitleaks_sensor import cmd_secrets, secrets_payload
-    from codescan.sensors.ruff_sensor import cmd_lint, lint_payload
-    from codescan.sensors.semgrep_sensor import cmd_sec, sec_payload
-    from codescan.sensors.type_sensor import cmd_type, type_payload
-    from codescan.shared.runner import detect_langs
-
-    path = Path(args.path)
-    langs = detect_langs(path)
-    fail_on = getattr(args, "fail_on", "never")
-    if fail_on != "never" and not getattr(args, "json", False):
-        print("codescan all: --fail-on requires --json", file=sys.stderr)
-        return 2
-    offline = bool(getattr(args, "offline", False))
-    if getattr(args, "json", False):
-        include = not getattr(args, "summary_only", False)
-        sensors = []
-        _, payload, _ = secrets_payload(path, include_findings=include)
-        sensors.append(payload)
-        if offline:
-            sensors.append(_offline_skip_payload(path, "sec", "semgrep"))
-        else:
-            _, payload, _ = sec_payload(path, args.config, include_findings=include)
-            sensors.append(payload)
-        sensors.extend(_dead_payloads(path, langs, args.min_confidence, include_findings=include))
-        if "py" in langs:
-            _, payload, _ = lint_payload(path, include_findings=include)
-            sensors.append(payload)
-            _, payload, _ = type_payload(path, args.type_tool, include_findings=include)
-            sensors.append(payload)
-        _, payload, _ = arch_payload(path, args.target, include_findings=include)
-        sensors.append(payload)
-        summary = _summary_payload(sensors)
-        findings = _findings_total(summary)
-        status = "degraded" if summary["errors"] else "findings" if findings else "ok"
-        print(
-            json.dumps(
-                {
-                    "command": "all",
-                    "schema_version": 1,
-                    "path": str(path),
-                    "status": status,
-                    "offline": offline,
-                    "summary": summary,
-                    "sensors": sensors,
-                },
-                indent=2,
-                ensure_ascii=False,
-            )
-        )
-        if summary["errors"] and fail_on in ("errors", "findings"):
-            return 2
-        if findings and fail_on == "findings":
-            return 1
-        return 0
-    print(f"#### codescan all on {path} ####")
-    if offline:
-        print("(offline mode: skipping semgrep — the only open-world sensor)\n")
-    else:
-        print()
-    _run_sensor(cmd_secrets, args, "secrets")
-    if not offline:
-        _run_sensor(cmd_sec, args, "SAST")
-    _run_dead_sensors(path, langs, args.min_confidence)
-    if "py" in langs:
-        _run_sensor(cmd_lint, args, "lint")
-        _run_sensor(cmd_type, args, "type")
-    _run_sensor(cmd_arch, args, "arch")
-    return 0
-
-
-def _offline_skip_payload(path: Path, command: str, sensor: str) -> dict[str, Any]:
-    """Emit a 'skipped' payload when --offline excludes a sensor.
-
-    Mirrors the `skipped` shape used by the dead-code sensors so consumers can
-    treat it uniformly (status=skipped, no counts, reason explains why).
-    """
-    return {
-        "command": command,
-        "schema_version": 1,
-        "tool": sensor,
-        "path": str(path),
-        "status": "skipped",
-        "reason": f"--offline: {sensor} is the only open-world sensor",
-        "counts": {},
-        "findings": [],
-        "findings_omitted": True,
-        "truncated": False,
-    }
-
-
-def _run_dead_sensors(path: Path, langs: set[str], min_confidence: int | None) -> int:
-    """Dispatch dead-code sensors for detected languages."""
-    from codescan.sensors.knip_sensor import cmd_dead_js
-    from codescan.sensors.vulture_sensor import cmd_dead_py
-
-    ran = False
-    if "py" in langs:
-        ran = True
-        cmd_dead_py(path, min_confidence)
-    if "js" in langs or "ts" in langs:
-        ran = True
-        cmd_dead_js(path)
-    if not ran:
-        print(
-            f"no Python/JS/TS project detected under {path} (pass -l py|js|ts to force)",
-            file=sys.stderr,
-        )
-        return 1
-    return 0
-
-
-def _dead_payloads(
-    path: Path,
-    langs: set[str],
-    min_confidence: int | None,
-    *,
-    include_findings: bool = True,
-) -> list[dict]:
-    """Run applicable dead-code sensors and return their payloads."""
-    from codescan.sensors.knip_sensor import dead_js_payload
-    from codescan.sensors.vulture_sensor import dead_py_payload
-
-    payloads: list[dict] = []
-    if "py" in langs:
-        _, payload, _ = dead_py_payload(path, min_confidence, include_findings=include_findings)
-        payloads.append(payload)
-    if "js" in langs or "ts" in langs:
-        _, payload, _ = dead_js_payload(path, include_findings=include_findings)
-        payloads.append(payload)
-    if not payloads:
-        payloads.append(
-            {
-                "command": "dead",
-                "schema_version": 1,
-                "tool": "auto",
-                "path": str(path),
-                "status": "skipped",
-                "reason": "no Python/JS/TS project detected",
-                "counts": {"items": 0},
-                "findings": [],
-                "findings_omitted": not include_findings,
-                "truncated": False,
-            }
-        )
-    return payloads
-
-
-def _summary_payload(sensor_payloads: list[dict]) -> dict[str, int]:
-    """Compact aggregate counts for routers."""
-    summary = {
-        "secrets": 0,
-        "sast_findings": 0,
-        "dead_items": 0,
-        "lint_findings": 0,
-        "type_diagnostics": 0,
-        "arch_violations": 0,
-        "errors": 0,
-        "skipped": 0,
-    }
-    for payload in sensor_payloads:
-        counts = payload.get("counts", {})
-        summary["secrets"] += int(counts.get("leaks", 0) or 0)
-        if payload.get("command") == "sec":
-            summary["sast_findings"] += int(counts.get("findings", 0) or 0)
-        summary["dead_items"] += int(counts.get("items", 0) or 0)
-        if payload.get("command") == "lint":
-            summary["lint_findings"] += int(counts.get("findings", 0) or 0)
-        if payload.get("command") == "type":
-            summary["type_diagnostics"] += int(counts.get("diagnostics", 0) or 0)
-        summary["arch_violations"] += int(counts.get("violations", 0) or 0)
-        status = payload.get("status")
-        if status in ("error", "missing_tool"):
-            summary["errors"] += 1
-        elif status == "skipped":
-            summary["skipped"] += 1
-    return summary
-
-
-def _findings_total(summary: dict[str, int]) -> int:
-    """Count actionable findings without treating skips or sensor errors as findings."""
-    finding_keys = (
-        "secrets",
-        "sast_findings",
-        "dead_items",
-        "lint_findings",
-        "type_diagnostics",
-        "arch_violations",
-    )
-    return sum(summary[key] for key in finding_keys)
-
-
-def _cmd_dead(args: argparse.Namespace) -> int:
-    """Dead-code dispatch: auto-detect languages, run appropriate sensors."""
-    from codescan.shared.runner import detect_langs
-
-    path = Path(args.path)
-    langs = {args.lang} if args.lang else detect_langs(path)
-    if getattr(args, "json", False):
-        sensors = _dead_payloads(path, langs, args.min_confidence)
-        print(
-            json.dumps(
-                {
-                    "command": "dead",
-                    "schema_version": 1,
-                    "path": str(path),
-                    "status": "ok"
-                    if all(item.get("status") in ("ok", "skipped") for item in sensors)
-                    else "degraded",
-                    "counts": {
-                        "items": sum(item.get("counts", {}).get("items", 0) for item in sensors)
-                    },
-                    "sensors": sensors,
-                },
-                indent=2,
-                ensure_ascii=False,
-            )
-        )
-        return 0
-    return _run_dead_sensors(path, langs, args.min_confidence)
-
-
 def _add_path(p: argparse.ArgumentParser) -> None:
     p.add_argument("-p", "--path", default=".", help="path to scan (default: cwd)")
 
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argument parser with all subcommands."""
-    # vs-soft-allow — argparse subparser tree; one responsibility (CLI surface),
-    # splitting per-subcommand only scatters a flat declarative spec and hurts
-    # readability/scan-ability.
+    # vs-soft-allow — argparse subparser tree; one responsibility (CLI surface).
     from codescan.sensors.depcruiser_sensor import cmd_arch
     from codescan.sensors.gitleaks_sensor import cmd_secrets
     from codescan.sensors.ruff_sensor import cmd_lint
@@ -286,7 +56,6 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--version", action="version", version=f"codescan {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    # list
     list_parser = sub.add_parser("list", help="show available sensors + versions")
     list_parser.set_defaults(func=cmd_list)
 
@@ -301,7 +70,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     capabilities_parser.set_defaults(func=cmd_capabilities)
 
-    # dead
     dead_parser = sub.add_parser("dead", help="dead code (vulture py / knip ts,js)")
     _add_path(dead_parser)
     dead_parser.add_argument(
@@ -318,16 +86,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="vulture min confidence (default: tool.vulture config, else 60)",
     )
     dead_parser.add_argument("--json", action="store_true", help="emit compact JSON")
-    dead_parser.set_defaults(func=_cmd_dead)
+    dead_parser.set_defaults(func=cmd_dead)
 
-    # lint
     lint_parser = sub.add_parser("lint", help="fast Python lint checks (ruff)")
     _add_path(lint_parser)
     lint_parser.add_argument("--summary-only", action="store_true", help="counts only")
     lint_parser.add_argument("--json", action="store_true", help="emit compact JSON")
     lint_parser.set_defaults(func=cmd_lint)
 
-    # type
     type_parser = sub.add_parser("type", help="Python type checks (pyright/mypy)")
     _add_path(type_parser)
     type_parser.add_argument(
@@ -340,7 +106,6 @@ def _build_parser() -> argparse.ArgumentParser:
     type_parser.add_argument("--json", action="store_true", help="emit compact JSON")
     type_parser.set_defaults(func=cmd_type)
 
-    # sec
     sec_parser = sub.add_parser("sec", help="SAST bugs+security (semgrep)")
     _add_path(sec_parser)
     sec_parser.add_argument("-c", "--config", default=None, help="semgrep config (default: auto)")
@@ -348,13 +113,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sec_parser.add_argument("--json", action="store_true", help="emit compact JSON")
     sec_parser.set_defaults(func=cmd_sec)
 
-    # secrets
     secrets_parser = sub.add_parser("secrets", help="leaked secrets (gitleaks, working tree)")
     _add_path(secrets_parser)
     secrets_parser.add_argument("--json", action="store_true", help="emit compact JSON")
     secrets_parser.set_defaults(func=cmd_secrets)
 
-    # arch
     arch_parser = sub.add_parser("arch", help="architecture/import rules (dependency-cruiser)")
     _add_path(arch_parser)
     arch_parser.add_argument("target", nargs="?", default="src", help="entry to cruise")
@@ -366,7 +129,6 @@ def _build_parser() -> argparse.ArgumentParser:
     arch_parser.add_argument("--json", action="store_true", help="emit compact JSON")
     arch_parser.set_defaults(func=cmd_arch)
 
-    # all
     all_parser = sub.add_parser("all", help="run every applicable sensor")
     _add_path(all_parser)
     all_parser.add_argument("-c", "--config", default=None, help="semgrep config (default: auto)")
