@@ -13,7 +13,7 @@ best-in-class tools and prints normalized, token-friendly summaries.
 | `sec` | semgrep | SAST bugs + security anti-patterns (30+ langs) |
 | `secrets` | gitleaks | Leaked keys/tokens in working tree |
 | `arch` | dependency-cruiser | Import-rule violations (layering, circular) |
-| `all` | (runs all above) | Sequential, CPU-safe |
+| `all` | (runs all above) | Parallel, host-aware (collapses to the slowest sensor) |
 | `capabilities` | built-in | Machine-readable sensor metadata for routers/workers |
 
 ## Install
@@ -34,9 +34,25 @@ codescan type -p src/ --tool auto      # Python type checks
 codescan sec -p src/                   # SAST scan
 codescan secrets -p src/               # secret leak scan
 codescan arch -p src/                  # architecture rules (needs .dependency-cruiser.cjs)
-codescan all -p src/                   # run every sensor, summarize
+codescan all -p src/                   # run every sensor, summarize (parallel)
 codescan all -p src/ --json            # compact structured handoff for routers/workers
+codescan all -p src/ --jobs 1          # force sequential (debugging / single-core CI)
+codescan all -p src/ --skip sec,arch   # omit sensors from the run entirely
 ```
+
+### Parallelism
+
+`codescan all` runs sensors concurrently — they are independent subprocess
+invocations with no shared state, so on a multi-core host the total wall-clock
+collapses to roughly the slowest sensor (typically semgrep) instead of the sum
+of all of them. Width is host-aware and bounded:
+
+- default: `min(6, cpu_count)` — leaves headroom for Ollama / desktop / agents
+- `CODESCAN_JOBS=N` env var, or `--jobs N` flag, overrides it
+- `--jobs 1` reproduces the exact pre-parallel sequential behavior
+
+Each sensor payload in `--json` output carries a `duration_ms` field so a
+router can see which sensor dominates.
 
 ### CI / router gates
 

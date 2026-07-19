@@ -84,7 +84,7 @@ CAPABILITIES: tuple[dict[str, Any], ...] = (
     },
     {
         "name": "all",
-        "purpose": "Run all applicable quality sensors sequentially.",
+        "purpose": "Run all applicable quality sensors in parallel (host-aware).",
         "read_only": True,
         "destructive": False,
         "idempotent": True,

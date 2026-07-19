@@ -34,10 +34,15 @@ quality findings too. The default remains report-only for agent workflows.
 - One sensor per file in `src/codescan/sensors/` (vertical slices).
 - Shared infra in `src/codescan/shared/` (config, runner).
 - `VENDOR_EXCLUDES` in `shared/config.py` mirrors codeq's list — keep in sync.
-- CPU-safe: sensors run SEQUENTIALLY (semgrep is heavy; WSL2 single scheduler).
+- Parallel by default: sensors run concurrently via `shared/concurrency.py`
+  (host-aware `min(6, cores)`, `--jobs` / `CODESCAN_JOBS` to override, `--jobs 1`
+  for sequential). Sensors are independent subprocesses with no shared state.
 - Zero external Python dependencies — delegates to external binaries.
 
 ## Key decisions
 - **No MCP** — CLI + skill keeps context minimal.
-- **Sequential execution** — CPU safety on WSL2.
+- **Parallel execution** — independent sensor subprocesses run concurrently on
+  multi-core hosts; total wall-clock collapses to the slowest sensor.
+  `--jobs 1` reproduces the old sequential behavior (the WSL2-era single-core
+  rationale no longer applies on the native Ubuntu host).
 - **Normalized output** — counts + top findings, not raw diffs.

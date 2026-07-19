@@ -166,15 +166,24 @@ def type_payload(
     return _mypy_payload(path, include_findings)
 
 
-def cmd_type(args: argparse.Namespace) -> int:
-    """Run a Python type checker and print compact diagnostics."""
+def cmd_type(
+    args: argparse.Namespace, *, precomputed: tuple[int, dict[str, Any], str] | None = None
+) -> int:
+    """Run a Python type checker and print compact diagnostics.
+
+    ``precomputed`` lets the ``all`` orchestrator render a parallel-collected
+    result instead of re-running the type checker.
+    """
     path = Path(args.path)
     include_findings = not getattr(args, "summary_only", False)
-    rc, payload, error = type_payload(
-        path,
-        getattr(args, "tool", getattr(args, "type_tool", "auto")),
-        include_findings=include_findings,
-    )
+    if precomputed is None:
+        rc, payload, error = type_payload(
+            path,
+            getattr(args, "tool", getattr(args, "type_tool", "auto")),
+            include_findings=include_findings,
+        )
+    else:
+        rc, payload, error = precomputed
     if getattr(args, "json", False):
         # --json always emits a parseable payload (status carries the outcome).
         print(json.dumps(payload, indent=2, ensure_ascii=False))

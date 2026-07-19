@@ -34,6 +34,31 @@ def run_dead_sensors(path: Path, langs: set[str], min_confidence: int | None) ->
     return 0
 
 
+def dead_results(
+    path: Path,
+    langs: set[str],
+    min_confidence: int | None,
+    *,
+    include_findings: bool = True,
+) -> list[tuple[int, dict[str, Any], str]]:
+    """Run applicable dead-code sensors, returning ``(rc, payload, error)`` tuples.
+
+    Tuple form (vs. :func:`dead_payloads`) lets the ``all`` orchestrator run
+    these concurrently with the other sensors and stamp per-sensor timing
+    without a second pass. Language ordering is stable: Python first, then
+    JS/TS — :func:`dead_payloads` and the text renderer rely on that order.
+    """
+    from codescan.sensors.knip_sensor import dead_js_payload
+    from codescan.sensors.vulture_sensor import dead_py_payload
+
+    results: list[tuple[int, dict[str, Any], str]] = []
+    if "py" in langs:
+        results.append(dead_py_payload(path, min_confidence, include_findings=include_findings))
+    if "js" in langs or "ts" in langs:
+        results.append(dead_js_payload(path, include_findings=include_findings))
+    return results
+
+
 def dead_payloads(
     path: Path,
     langs: set[str],
@@ -41,17 +66,16 @@ def dead_payloads(
     *,
     include_findings: bool = True,
 ) -> list[dict[str, Any]]:
-    """Run applicable dead-code sensors and return their payloads."""
-    from codescan.sensors.knip_sensor import dead_js_payload
-    from codescan.sensors.vulture_sensor import dead_py_payload
+    """Run applicable dead-code sensors and return their payloads.
 
-    payloads: list[dict[str, Any]] = []
-    if "py" in langs:
-        _, payload, _ = dead_py_payload(path, min_confidence, include_findings=include_findings)
-        payloads.append(payload)
-    if "js" in langs or "ts" in langs:
-        _, payload, _ = dead_js_payload(path, include_findings=include_findings)
-        payloads.append(payload)
+    Thin projection over :func:`dead_results` (payloads only). When no
+    Python/JS/TS project is detected, emits one ``skipped`` payload so the
+    ``all`` JSON report still carries a typed dead section.
+    """
+    payloads = [
+        result[1]
+        for result in dead_results(path, langs, min_confidence, include_findings=include_findings)
+    ]
     if not payloads:
         payloads.append(
             {

@@ -100,10 +100,14 @@ def version_of(tool: str) -> str:
         "knip": ["--version"],
         "dependency-cruiser": ["--version"],
     }.get(tool, ["--version"])
+    # run() already absorbs subprocess spawn/timeout errors and returns rc;
+    # the only remaining failure mode is empty output yielding IndexError on
+    # splitlines()[0]. Catch that specific case rather than swallowing bugs.
     try:
         _, out, _ = run([tool] + flags, timeout=10)
-        return (out or "?").strip().splitlines()[0][:40]
-    except Exception:
+        first_line = (out or "").strip().splitlines()
+        return first_line[0][:40] if first_line else "?"
+    except (OSError, IndexError):
         return "?"
 
 

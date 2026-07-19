@@ -119,8 +119,14 @@ def arch_payload(
     return 0, payload, ""
 
 
-def cmd_arch(args: argparse.Namespace) -> int:
-    """dependency-cruiser: validate import-graph rules. Requires .dependency-cruiser.cjs/.js."""
+def cmd_arch(
+    args: argparse.Namespace, *, precomputed: tuple[int, dict[str, Any], str] | None = None
+) -> int:
+    """dependency-cruiser: validate import-graph rules. Requires .dependency-cruiser.cjs/.js.
+
+    ``precomputed`` lets the ``all`` orchestrator render a parallel-collected
+    result instead of re-running dependency-cruiser.
+    """
     if getattr(args, "init", False):
         # --init is the only path that may write; refuse if any cruft exists.
         root = _root_for(Path(args.path))
@@ -133,7 +139,10 @@ def cmd_arch(args: argparse.Namespace) -> int:
         print("  edit me: drop in your domain rules under `forbidden:`")
         return 0
     path = Path(args.path)
-    rc, payload, error = arch_payload(path, args.target)
+    if precomputed is None:
+        rc, payload, error = arch_payload(path, args.target)
+    else:
+        rc, payload, error = precomputed
     if payload["status"] == "missing_tool":
         die("dependency-cruiser not installed", 2)
     if getattr(args, "json", False):

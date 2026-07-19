@@ -64,9 +64,16 @@ def dead_js_payload(
     return 0, payload, ""
 
 
-def cmd_dead_js(path: Path) -> int:
-    """Run knip on a JS/TS project. Requires package.json."""
-    rc, payload, error = dead_js_payload(path)
+def cmd_dead_js(path: Path, *, precomputed: tuple[int, dict[str, Any], str] | None = None) -> int:
+    """Run knip on a JS/TS project. Requires package.json.
+
+    ``precomputed`` lets the ``all`` orchestrator render a parallel-collected
+    result instead of re-running knip.
+    """
+    if precomputed is None:
+        rc, payload, error = dead_js_payload(path)
+    else:
+        rc, payload, error = precomputed
     if payload["status"] == "skipped":
         print(error, file=sys.stderr)
         return rc

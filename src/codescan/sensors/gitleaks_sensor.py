@@ -135,10 +135,19 @@ def secrets_payload(
     return 0, payload, ""
 
 
-def cmd_secrets(args: argparse.Namespace) -> int:
-    """gitleaks secret scan on the WORKING TREE. Pass src/, not '.'."""
+def cmd_secrets(
+    args: argparse.Namespace, *, precomputed: tuple[int, dict[str, Any], str] | None = None
+) -> int:
+    """gitleaks secret scan on the WORKING TREE. Pass src/, not '.'.
+
+    ``precomputed`` lets the ``all`` orchestrator render a result it already
+    collected in parallel instead of re-running the scan.
+    """
     path = Path(args.path)
-    rc, payload, error = secrets_payload(path)
+    if precomputed is None:
+        rc, payload, error = secrets_payload(path)
+    else:
+        rc, payload, error = precomputed
     if getattr(args, "json", False):
         # --json always emits a parseable payload (status carries the outcome);
         # never die/return empty, which would break router/worker JSON parsing.

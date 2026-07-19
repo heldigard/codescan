@@ -163,6 +163,22 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip semgrep (the only open-world sensor); much faster, sandboxed",
     )
+    all_parser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=None,
+        help="max sensors to run in parallel (default: host-aware, "
+        "min(6, cores); CODESCAN_JOBS env; 1 = sequential)",
+    )
+    all_parser.add_argument(
+        "--skip",
+        default="",
+        help="comma-separated sensors to omit entirely from the run "
+        "(secrets,sec,dead,lint,type,arch); dropped sensors do not appear "
+        "in JSON. Use to skip the slow open-world sensor without --offline "
+        "semantics, e.g. --skip sec,arch",
+    )
     all_parser.set_defaults(func=cmd_all)
 
     return ap

@@ -91,12 +91,21 @@ def sec_payload(
     return 0, payload, ""
 
 
-def cmd_sec(args: argparse.Namespace) -> int:
-    """semgrep SAST. Prints finding counts by severity — not the full diff."""
+def cmd_sec(
+    args: argparse.Namespace, *, precomputed: tuple[int, dict[str, Any], str] | None = None
+) -> int:
+    """semgrep SAST. Prints finding counts by severity — not the full diff.
+
+    ``precomputed`` lets the ``all`` orchestrator render a parallel-collected
+    result instead of re-running semgrep.
+    """
     cfg = args.config or "auto"
     path = str(Path(args.path))
     include_findings = not getattr(args, "summary_only", False)
-    rc, payload, error = sec_payload(Path(path), cfg, include_findings=include_findings)
+    if precomputed is None:
+        rc, payload, error = sec_payload(Path(path), cfg, include_findings=include_findings)
+    else:
+        rc, payload, error = precomputed
     if getattr(args, "json", False):
         # --json always emits a parseable payload (status carries the outcome).
         print(json.dumps(payload, indent=2, ensure_ascii=False))

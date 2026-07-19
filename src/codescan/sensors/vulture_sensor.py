@@ -244,9 +244,22 @@ def dead_py_payload(
     return 0, payload, ""
 
 
-def cmd_dead_py(path: Path, min_confidence: int | None) -> int:
-    """Run vulture on a Python project."""
-    rc, payload, error = dead_py_payload(path, min_confidence)
+def cmd_dead_py(
+    path: Path,
+    min_confidence: int | None,
+    *,
+    precomputed: tuple[int, dict[str, Any], str] | None = None,
+) -> int:
+    """Run vulture on a Python project.
+
+    ``precomputed`` lets the ``all`` orchestrator render a parallel-collected
+    result instead of re-running vulture; ``path``/``min_confidence`` are then
+    only used for the section header.
+    """
+    if precomputed is None:
+        rc, payload, error = dead_py_payload(path, min_confidence)
+    else:
+        rc, payload, error = precomputed
     if payload["status"] == "skipped":
         print(error, file=sys.stderr)
         return rc
