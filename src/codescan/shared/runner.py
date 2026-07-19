@@ -104,8 +104,10 @@ def version_of(tool: str) -> str:
     # the only remaining failure mode is empty output yielding IndexError on
     # splitlines()[0]. Catch that specific case rather than swallowing bugs.
     try:
-        _, out, _ = run([tool] + flags, timeout=10)
-        first_line = (out or "").strip().splitlines()
+        # Some tools (historically gitleaks, npm wrappers) print version on
+        # stderr; prefer stdout, fall back to stderr so `list` never shows "?".
+        _, out, err = run([tool] + flags, timeout=10)
+        first_line = (out or err or "").strip().splitlines()
         return first_line[0][:40] if first_line else "?"
     except (OSError, IndexError):
         return "?"

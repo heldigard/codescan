@@ -15,10 +15,17 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+
+# Invoke via the interpreter under test so a stale ~/.local/bin/codescan cannot
+# shadow the package being developed (common on multi-install Ubuntu hosts).
+def _codescan(*args: str) -> list[str]:
+    return [sys.executable, "-m", "codescan", *args]
 
 
 def run(
@@ -37,21 +44,34 @@ def fake_bin(path: Path, name: str, body: str) -> None:
 
 
 def test_codescan_list() -> None:
-    r = run(["codescan", "list"])
+    r = run(_codescan("list"))
     assert "semgrep" in r.stdout, f"codescan list missing semgrep: {r.stdout}"
     assert "vulture" in r.stdout, f"codescan list missing vulture: {r.stdout}"
     assert "available" in r.stdout, f"codescan list malformed: {r.stdout}"
 
 
+def test_codescan_list_json() -> None:
+    """list --json is a compact router handoff (sensor availability matrix)."""
+    r = run(_codescan("list", "--json"))
+    payload = json.loads(r.stdout)
+    assert payload["command"] == "list"
+    assert payload["schema_version"] == 1
+    sensors = {row["sensor"]: row for row in payload["sensors"]}
+    assert "semgrep" in sensors
+    assert "vulture" in sensors
+    assert "available" in sensors["semgrep"]
+    assert r.stdout.count("\n") == 1, "list --json stays single-line compact"
+
+
 def test_codescan_version() -> None:
     from codescan import __version__
 
-    r = run(["codescan", "--version"])
+    r = run(_codescan("--version"))
     assert r.stdout.strip() == f"codescan {__version__}", r.stdout
 
 
 def test_codescan_capabilities_contract() -> None:
-    r = run(["codescan", "capabilities", "--json"])
+    r = run(_codescan("capabilities", "--json"))
     payload = json.loads(r.stdout)
     assert payload["command"] == "capabilities"
     assert payload["schema_version"] == 1
@@ -150,18 +170,59 @@ def test_codescan_all_json_reports_jobs_and_duration(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     r = run(
-        ["codescan", "all", "-p", str(project), "--json", "--summary-only", "--jobs", "3"],
+        _codescan("all", "-p", str(project), "--json", "--summary-only", "--jobs", "3"),
         check=False,
         env=env,
     )
     assert r.returncode == 0, f"all json failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
     assert payload["jobs"] == 3
+    assert isinstance(payload.get("wall_ms"), int)
+    assert payload["wall_ms"] >= 0
     # Every sensor payload carries a non-negative duration_ms so routers can
     # see which sensor dominates wall-clock.
     for sensor in payload["sensors"]:
         assert isinstance(sensor.get("duration_ms"), int), sensor
         assert sensor["duration_ms"] >= 0, sensor
+
+
+def test_codescan_all_isolates_sensor_exceptions(tmp_path: Path) -> None:
+    """A crashing sensor becomes a typed error payload (does not abort the pool)."""
+    from codescan.sensors import all_command
+
+    section = {
+        "key": "sec",
+        "label": "SAST",
+        "path": tmp_path,
+        "produce": lambda: (_ for _ in ()).throw(RuntimeError("synthetic sensor boom")),
+    }
+    results = all_command._run_section(section)
+    assert len(results) == 1
+    rc, payload, error = results[0]
+    assert rc == 2
+    assert payload["status"] == "error"
+    assert "synthetic sensor boom" in error
+    assert payload["duration_ms"] >= 0
+    # summary_payload must count the isolated failure as an error.
+    summary = all_command.summary_payload([payload])
+    assert summary["errors"] == 1
+
+
+def test_codescan_all_offline_env(tmp_path: Path) -> None:
+    """CODESCAN_OFFLINE=1 skips semgrep the same way as --offline."""
+    (tmp_path / "app.py").write_text("x = 1\n")
+    env = os.environ.copy()
+    env["CODESCAN_OFFLINE"] = "1"
+    r = run(
+        _codescan("all", "-p", str(tmp_path), "--json", "--summary-only", "--jobs", "1"),
+        check=False,
+        env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    payload = json.loads(r.stdout)
+    assert payload["offline"] is True
+    sec = next(s for s in payload["sensors"] if s.get("command") == "sec")
+    assert sec["status"] == "skipped"
 
 
 def test_codescan_all_parallel_matches_serial_summary(tmp_path: Path) -> None:
@@ -188,12 +249,12 @@ def test_codescan_all_parallel_matches_serial_summary(tmp_path: Path) -> None:
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
 
     serial = run(
-        ["codescan", "all", "-p", str(project), "--json", "--summary-only", "--jobs", "1"],
+        _codescan("all", "-p", str(project), "--json", "--summary-only", "--jobs", "1"),
         check=False,
         env=env,
     )
     parallel = run(
-        ["codescan", "all", "-p", str(project), "--json", "--summary-only", "--jobs", "4"],
+        _codescan("all", "-p", str(project), "--json", "--summary-only", "--jobs", "4"),
         check=False,
         env=env,
     )
@@ -220,7 +281,7 @@ def test_codescan_all_skip_drops_named_sensors(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     r = run(
-        ["codescan", "all", "-p", str(project), "--json", "--summary-only", "--skip", "sec,arch"],
+        _codescan("all", "-p", str(project), "--json", "--summary-only", "--skip", "sec,arch"),
         check=False,
         env=env,
     )
@@ -246,7 +307,7 @@ def test_codescan_all_skip_warns_on_unknown_name(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     r = run(
-        ["codescan", "all", "-p", str(project), "--json", "--summary-only", "--skip", "sec,bogus"],
+        _codescan("all", "-p", str(project), "--json", "--summary-only", "--skip", "sec,bogus"),
         check=False,
         env=env,
     )
@@ -272,7 +333,7 @@ def test_codescan_dead_detects(tmp_path: Path) -> None:
     (tmp_path / ".venv").mkdir()
     (tmp_path / ".venv" / "v.py").write_text("def venv_leak():\n    pass\n")
 
-    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py"], check=False)
+    r = run(_codescan("dead", "-p", str(tmp_path), "-l", "py"), check=False)
     assert "dead_func" in r.stdout, f"dead missed dead_func: {r.stdout}"
     assert "__pycache__" not in r.stdout, f"dead leaked __pycache__: {r.stdout}"
     assert ".venv" not in r.stdout, f"dead leaked .venv: {r.stdout}"
@@ -293,7 +354,7 @@ def test_codescan_dead_no_substring_exclude_false_positive(tmp_path: Path) -> No
         "from lib import helper\ndef caller():\n    return helper()\n"
     )
 
-    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py"], check=False)
+    r = run(_codescan("dead", "-p", str(tmp_path), "-l", "py"), check=False)
     assert "helper" not in r.stdout, (
         f"substring exclude blinded vulture: router.py excluded, helper falsely dead: {r.stdout}"
     )
@@ -314,7 +375,7 @@ def test_codescan_dead_respects_vulture_pyproject(tmp_path: Path) -> None:
         "def configured_dead_func():\n    return 1\ndef ordinary_dead_func():\n    return 2\n"
     )
 
-    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py"], check=False)
+    r = run(_codescan("dead", "-p", str(tmp_path), "-l", "py"), check=False)
     assert r.returncode == 0, f"dead failed: stdout={r.stdout} stderr={r.stderr}"
     assert "configured_dead_func" not in r.stdout, f"vulture config was ignored: {r.stdout}"
     assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
@@ -328,7 +389,7 @@ def test_codescan_dead_ignores_pep562_module_hooks(tmp_path: Path) -> None:
         "def ordinary_dead_func():\n    return 2\n"
     )
 
-    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py"], check=False)
+    r = run(_codescan("dead", "-p", str(tmp_path), "-l", "py"), check=False)
     assert r.returncode == 0, f"dead failed: stdout={r.stdout} stderr={r.stderr}"
     assert "__getattr__" not in r.stdout, f"PEP 562 __getattr__ leaked: {r.stdout}"
     assert "__dir__" not in r.stdout, f"PEP 562 __dir__ leaked: {r.stdout}"
@@ -361,7 +422,7 @@ def test_codescan_dead_ignores_parser_callbacks(tmp_path: Path) -> None:
         "    return 2\n"
     )
 
-    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py"], check=False)
+    r = run(_codescan("dead", "-p", str(tmp_path), "-l", "py"), check=False)
     assert r.returncode == 0, f"dead failed: stdout={r.stdout} stderr={r.stderr}"
     assert "handle_starttag" not in r.stdout, f"HTMLParser callback flagged dead (FP): {r.stdout}"
     assert "handle_data" not in r.stdout, f"HTMLParser callback flagged dead (FP): {r.stdout}"
@@ -397,7 +458,7 @@ def test_codescan_dead_ignores_asyncio_protocol_callbacks(tmp_path: Path) -> Non
         "    return 2\n"
     )
 
-    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py"], check=False)
+    r = run(_codescan("dead", "-p", str(tmp_path), "-l", "py"), check=False)
     assert r.returncode == 0, f"dead failed: stdout={r.stdout} stderr={r.stderr}"
     assert "connection_made" not in r.stdout, f"asyncio callback flagged dead (FP): {r.stdout}"
     assert "data_received" not in r.stdout, f"asyncio callback flagged dead (FP): {r.stdout}"
@@ -412,7 +473,7 @@ def test_codescan_dead_single_file(tmp_path: Path) -> None:
     """codescan dead must correctly detect languages and run on a single file path."""
     app_file = tmp_path / "app.py"
     app_file.write_text("def ordinary_dead_func():\n    return 2\n")
-    r = run(["codescan", "dead", "-p", str(app_file)], check=False)
+    r = run(_codescan("dead", "-p", str(app_file)), check=False)
     assert r.returncode == 0, f"dead on single file failed: stdout={r.stdout} stderr={r.stderr}"
     assert "ordinary_dead_func" in r.stdout, f"expected vulture finding: {r.stdout}"
 
@@ -436,7 +497,7 @@ def test_codescan_secrets_excludes_cache_dirs(tmp_path: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("ghp_" + "0" * 36, encoding="utf-8")
 
-    r = run(["codescan", "secrets", "-p", str(tmp_path)], check=False)
+    r = run(_codescan("secrets", "-p", str(tmp_path)), check=False)
 
     assert r.returncode == 0, f"secrets failed: stdout={r.stdout} stderr={r.stderr}"
     assert "leaks: 0" in r.stdout, r.stdout
@@ -457,7 +518,7 @@ def test_codescan_secrets_json_is_compact_and_redacted(tmp_path: Path) -> None:
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
-    r = run(["codescan", "secrets", "-p", str(project), "--json"], check=False, env=env)
+    r = run(_codescan("secrets", "-p", str(project), "--json"), check=False, env=env)
 
     assert r.returncode == 0, f"secrets json failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
@@ -479,7 +540,7 @@ def test_codescan_secrets_error_when_gitleaks_signals_leaks_unparseable(tmp_path
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
-    r = run(["codescan", "secrets", "-p", str(project), "--json"], check=False, env=env)
+    r = run(_codescan("secrets", "-p", str(project), "--json"), check=False, env=env)
 
     assert r.returncode == 2, f"secrets should error: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
@@ -504,7 +565,7 @@ def test_codescan_sec_json_is_compact(tmp_path: Path) -> None:
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
-    r = run(["codescan", "sec", "-p", str(project), "--json"], check=False, env=env)
+    r = run(_codescan("sec", "-p", str(project), "--json"), check=False, env=env)
 
     assert r.returncode == 0, f"sec json failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
@@ -526,7 +587,7 @@ def test_codescan_dead_json_reports_sensor_payload(tmp_path: Path) -> None:
     """Dead-code JSON mode gives routers typed sensor payloads."""
     (tmp_path / "app.py").write_text("def ordinary_dead_func():\n    return 2\n")
 
-    r = run(["codescan", "dead", "-p", str(tmp_path), "-l", "py", "--json"], check=False)
+    r = run(_codescan("dead", "-p", str(tmp_path), "-l", "py", "--json"), check=False)
 
     assert r.returncode == 0, f"dead json failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
@@ -554,7 +615,7 @@ def test_codescan_lint_json_is_compact(tmp_path: Path) -> None:
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
-    r = run(["codescan", "lint", "-p", str(project), "--json"], check=False, env=env)
+    r = run(_codescan("lint", "-p", str(project), "--json"), check=False, env=env)
 
     assert r.returncode == 0, f"lint json failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
@@ -590,7 +651,7 @@ def test_codescan_type_json_pyright_is_compact(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     r = run(
-        ["codescan", "type", "-p", str(project), "--tool", "pyright", "--json"],
+        _codescan("type", "-p", str(project), "--tool", "pyright", "--json"),
         check=False,
         env=env,
     )
@@ -666,7 +727,7 @@ def test_codescan_arch_json_skips_without_config(tmp_path: Path) -> None:
     fake_bin(bin_dir, "depcruise", "exit 0\n")
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
-    r = run(["codescan", "arch", "-p", str(tmp_path), "--json"], check=False, env=env)
+    r = run(_codescan("arch", "-p", str(tmp_path), "--json"), check=False, env=env)
 
     assert r.returncode == 0, f"arch json skip failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
@@ -693,7 +754,7 @@ def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
     r = run(
-        ["codescan", "all", "-p", str(project), "--json", "--summary-only"],
+        _codescan("all", "-p", str(project), "--json", "--summary-only"),
         check=False,
         env=env,
     )
@@ -745,7 +806,7 @@ def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
 
 def test_codescan_all_fail_on_requires_json(tmp_path: Path) -> None:
     r = run(
-        ["codescan", "all", "-p", str(tmp_path), "--fail-on", "errors"],
+        _codescan("all", "-p", str(tmp_path), "--fail-on", "errors"),
         check=False,
     )
     assert r.returncode == 2
@@ -797,7 +858,7 @@ def test_codescan_arch_skips_without_config(tmp_path: Path) -> None:
     fake_bin(bin_dir, "depcruise", "exit 0\n")
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
-    r = run(["codescan", "arch", "-p", str(tmp_path)], check=False, env=env)
+    r = run(_codescan("arch", "-p", str(tmp_path)), check=False, env=env)
     assert r.returncode == 1, f"arch should exit 1 without config, got {r.returncode}"
     assert "no .dependency-cruiser" in r.stderr.lower(), f"arch should explain the skip: {r.stderr}"
 
@@ -814,7 +875,7 @@ def test_codescan_dead_js_runs_knip_from_package_root(tmp_path: Path) -> None:
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
-    r = run(["codescan", "dead", "-p", str(src), "-l", "js"], check=False, env=env)
+    r = run(_codescan("dead", "-p", str(src), "-l", "js"), check=False, env=env)
 
     assert r.returncode == 0, f"knip sensor failed: stdout={r.stdout} stderr={r.stderr}"
     assert f"warn cwd={project}" in r.stdout, f"knip did not run in package root: {r.stdout}"
@@ -832,7 +893,7 @@ def test_codescan_arch_uses_js_config_and_project_root(tmp_path: Path) -> None:
 
     env = os.environ.copy()
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
-    r = run(["codescan", "arch", "-p", str(src)], check=False, env=env)
+    r = run(_codescan("arch", "-p", str(src)), check=False, env=env)
 
     assert r.returncode == 0, f"arch sensor failed: stdout={r.stdout} stderr={r.stderr}"
     assert f"warn cwd={project}" in r.stdout, f"depcruise ran from wrong cwd: {r.stdout}"
@@ -877,7 +938,7 @@ def test_codescan_secrets_detects_leak_under_tmp(tmp_path: Path) -> None:
     )
     (tmp_path / "slack.txt").write_text(token + "\n", encoding="utf-8")
 
-    r = run(["codescan", "secrets", "-p", str(tmp_path), "--json"], check=False)
+    r = run(_codescan("secrets", "-p", str(tmp_path), "--json"), check=False)
 
     assert r.returncode == 0, f"secrets failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
@@ -898,7 +959,7 @@ def test_codescan_type_resolves_relative_subdir(tmp_path: Path) -> None:
     sub.mkdir()
     (sub / "app.py").write_text("x: int = 1\n", encoding="utf-8")
 
-    r = run(["codescan", "type", "-p", "relsub", "--json"], cwd=tmp_path, check=False)
+    r = run(_codescan("type", "-p", "relsub", "--json"), cwd=tmp_path, check=False)
 
     assert r.returncode == 0, f"type rel failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
@@ -907,7 +968,7 @@ def test_codescan_type_resolves_relative_subdir(tmp_path: Path) -> None:
 
 def test_codescan_arch_init_creates_starter(tmp_path: Path) -> None:
     """codescan arch --init writes a starter config; second call refuses to overwrite."""
-    r1 = run(["codescan", "arch", "--init", "-p", str(tmp_path)], check=False)
+    r1 = run(_codescan("arch", "--init", "-p", str(tmp_path)), check=False)
     assert r1.returncode == 0, f"init failed: {r1.stderr}"
     assert "wrote:" in r1.stdout, r1.stdout
     starter = tmp_path / ".dependency-cruiser.cjs"
@@ -917,7 +978,7 @@ def test_codescan_arch_init_creates_starter(tmp_path: Path) -> None:
     assert "doNotFollow" in body, "missing doNotFollow vendor excludes"
     assert "no-cross-feature-imports" in body, "missing vertical-slice rule"
 
-    r2 = run(["codescan", "arch", "--init", "-p", str(tmp_path)], check=False)
+    r2 = run(_codescan("arch", "--init", "-p", str(tmp_path)), check=False)
     assert r2.returncode == 1, "second --init must refuse to overwrite"
     assert "exists, not overwritten" in r2.stderr, r2.stderr
 
@@ -927,7 +988,7 @@ def test_codescan_all_offline_skips_semgrep(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname='s'\nversion='0'\n")
     (tmp_path / "app.py").write_text("import os\ndef live(): return os.getcwd()\n")
     r = run(
-        ["codescan", "all", "-p", str(tmp_path), "--offline", "--json", "--summary-only"],
+        _codescan("all", "-p", str(tmp_path), "--offline", "--json", "--summary-only"),
         check=False,
     )
     assert r.returncode == 0, f"offline run failed: stdout={r.stdout} stderr={r.stderr}"
@@ -954,6 +1015,12 @@ def test_vendor_excludes_cover_agent_and_mcp_noise() -> None:
         ".memory-bank",
         ".claude",
         ".codex",
+        ".grok",
+        ".opencode",
+        ".gemini",
+        ".antigravity",
+        ".kimi",
+        ".qwen",
         ".cursor",
         ".playwright-mcp",
         ".chrome-devtools-mcp",
@@ -1012,7 +1079,7 @@ def test_vendor_excludes_parity_with_colocated_codeq() -> None:
 
 def main() -> int:
     print("codescan orchestrator smoke test")
-    run(["which", "codescan"])
+    run(["which", "codescan"])  # host PATH probe
 
     test_codescan_list()
     print("  codescan list: OK")

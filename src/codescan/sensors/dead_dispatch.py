@@ -10,7 +10,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 def run_dead_sensors(path: Path, langs: set[str], min_confidence: int | None) -> int:
@@ -47,16 +47,27 @@ def dead_results(
     these concurrently with the other sensors and stamp per-sensor timing
     without a second pass. Language ordering is stable: Python first, then
     JS/TS — :func:`dead_payloads` and the text renderer rely on that order.
+
+    When both ecosystems are present, vulture and knip run in parallel (native
+    multi-core host): they are independent subprocesses with no shared state.
     """
     from codescan.sensors.knip_sensor import dead_js_payload
     from codescan.sensors.vulture_sensor import dead_py_payload
+    from codescan.shared.concurrency import parallel_map
 
-    results: list[tuple[int, dict[str, Any], str]] = []
+    producers: list[Callable[[], tuple[int, dict[str, Any], str]]] = []
     if "py" in langs:
-        results.append(dead_py_payload(path, min_confidence, include_findings=include_findings))
+        producers.append(
+            lambda: dead_py_payload(path, min_confidence, include_findings=include_findings)
+        )
     if "js" in langs or "ts" in langs:
-        results.append(dead_js_payload(path, include_findings=include_findings))
-    return results
+        producers.append(lambda: dead_js_payload(path, include_findings=include_findings))
+    if not producers:
+        return []
+    if len(producers) == 1:
+        return [producers[0]()]
+    # Two independent sensors — parallelize; order preserved by parallel_map.
+    return parallel_map(lambda produce: produce(), producers, jobs=len(producers))
 
 
 def dead_payloads(

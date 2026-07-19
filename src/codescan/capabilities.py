@@ -12,7 +12,7 @@ CAPABILITIES: tuple[dict[str, Any], ...] = (
         "destructive": False,
         "idempotent": True,
         "open_world": False,
-        "structured_json": False,
+        "structured_json": True,  # --json compact table for routers
         "external_tools": tuple(),
         "cost": "cheap",
     },

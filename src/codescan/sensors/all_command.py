@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -155,14 +156,39 @@ def _build_sections(
     return [section for section in sections if section["key"] not in skip]
 
 
+def _error_payload(section_key: str, path: Path, exc: BaseException) -> dict[str, Any]:
+    """Typed error payload when a sensor producer raises (never crash ``all``)."""
+    return {
+        "command": section_key,
+        "schema_version": 1,
+        "tool": "?",
+        "path": str(path),
+        "status": "error",
+        "error": f"{type(exc).__name__}: {exc}",
+        "counts": {},
+        "findings": [],
+        "findings_omitted": True,
+        "truncated": False,
+    }
+
+
 def _run_section(section: dict[str, Any]) -> list[tuple[int, dict[str, Any], str]]:
     """Execute one section's producer, stamping wall-clock ``duration_ms`` per payload.
 
     Timing wraps the whole producer (subprocess spawn + parse), which is the
-    number a router cares about when deciding which sensor is slow.
+    number a router cares about when deciding which sensor is slow. Unexpected
+    exceptions are converted into a typed ``error`` payload so one broken
+    sensor cannot abort the rest of a parallel ``all`` pass.
     """
     start = time.perf_counter()
-    results = section["produce"]()
+    try:
+        results = section["produce"]()
+    except Exception as exc:  # noqa: BLE001 — sensor boundary; degrade, don't crash
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        path = section.get("path") or Path(".")
+        payload = _error_payload(section["key"], Path(path), exc)
+        payload["duration_ms"] = duration_ms
+        return [(2, payload, payload["error"])]
     duration_ms = int((time.perf_counter() - start) * 1000)
     for result in results:
         result[1]["duration_ms"] = duration_ms
@@ -171,18 +197,25 @@ def _run_section(section: dict[str, Any]) -> list[tuple[int, dict[str, Any], str
 
 def _collect(
     args: argparse.Namespace, langs: set[str], jobs: int | None
-) -> tuple[list[dict[str, Any]], list[list[tuple[int, dict[str, Any], str]]]]:
-    """Run all sections in parallel; return (sections, per-section results).
+) -> tuple[list[dict[str, Any]], list[list[tuple[int, dict[str, Any], str]]], int]:
+    """Run all sections in parallel; return (sections, results, wall_ms).
 
     Results stay grouped by section so the text renderer can walk
     section→results directly. ``parallel_map`` preserves order regardless of
-    completion order, and falls back to serial when ``jobs<=1``.
+    completion order, and falls back to serial when ``jobs<=1``. ``wall_ms`` is
+    wall-clock for the whole collect phase (what a router sees as total cost).
     """
     path = Path(args.path)
     include = not getattr(args, "summary_only", False)
     offline = bool(getattr(args, "offline", False))
     sections = _build_sections(args, path, langs, include, offline)
-    return sections, parallel_map(_run_section, sections, jobs=jobs)
+    # Stamp path onto each section for exception payloads (producers already close over it).
+    for section in sections:
+        section["path"] = path
+    start = time.perf_counter()
+    results = parallel_map(_run_section, sections, jobs=jobs)
+    wall_ms = int((time.perf_counter() - start) * 1000)
+    return sections, results, wall_ms
 
 
 def summary_payload(sensor_payloads: list[dict[str, Any]]) -> dict[str, int]:
@@ -305,6 +338,14 @@ def _render_one_dead(
         cmd_dead_js(section_path, precomputed=precomputed)
 
 
+def _resolve_offline(args: argparse.Namespace) -> bool:
+    """True when ``--offline`` or ``CODESCAN_OFFLINE=1`` (sandbox-friendly default)."""
+    if bool(getattr(args, "offline", False)):
+        return True
+    raw = os.environ.get("CODESCAN_OFFLINE", "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def cmd_all(args: argparse.Namespace) -> int:
     """Run every applicable sensor in parallel (host-aware; ``--jobs`` bounds width)."""
     from codescan.shared.runner import detect_langs
@@ -315,16 +356,18 @@ def cmd_all(args: argparse.Namespace) -> int:
     if fail_on != "never" and not getattr(args, "json", False):
         print("codescan all: --fail-on requires --json", file=sys.stderr)
         return 2
+    # Honour CODESCAN_OFFLINE so sandboxed agents skip open-world semgrep without flags.
+    args.offline = _resolve_offline(args)
     jobs = getattr(args, "jobs", None)
     effective_jobs = jobs if jobs is not None else default_jobs()
-    sections, per_section = _collect(args, langs, jobs)
+    sections, per_section, wall_ms = _collect(args, langs, jobs)
 
     sensors = [result[1] for section_results in per_section for result in section_results]
     summary = summary_payload(sensors)
     findings = findings_total(summary)
 
     if getattr(args, "json", False):
-        return _emit_json(args, path, summary, findings, sensors, effective_jobs)
+        return _emit_json(args, path, summary, findings, sensors, effective_jobs, wall_ms)
     _emit_text(args, path, sections, per_section)
     return 0
 
@@ -336,6 +379,7 @@ def _emit_json(
     findings: int,
     sensors: list[dict[str, Any]],
     effective_jobs: int,
+    wall_ms: int,
 ) -> int:
     """Print the aggregated JSON handoff and apply the --fail-on exit policy."""
     offline = bool(getattr(args, "offline", False))
@@ -350,6 +394,7 @@ def _emit_json(
                 "status": status,
                 "offline": offline,
                 "jobs": effective_jobs,
+                "wall_ms": wall_ms,
                 "summary": summary,
                 "sensors": sensors,
             },

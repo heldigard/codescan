@@ -37,6 +37,7 @@ quality findings too. The default remains report-only for agent workflows.
 - Parallel by default: sensors run concurrently via `shared/concurrency.py`
   (host-aware `min(6, cores)`, `--jobs` / `CODESCAN_JOBS` to override, `--jobs 1`
   for sequential). Sensors are independent subprocesses with no shared state.
+- Sandbox: `CODESCAN_OFFLINE=1` or `--offline` skips open-world semgrep.
 - Zero external Python dependencies — delegates to external binaries.
 
 ## Key decisions

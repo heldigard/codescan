@@ -29,3 +29,8 @@ jobs:
         run: ruff format --check .
       - name: Run tests
         run: pytest
+      - name: Offline quality gate (sensor errors only)
+        # Report-only for findings; fail the job when a sensor is broken/missing
+        # in a way that would silently degrade agent handoffs. Uses --offline so
+        # CI stays sandboxed (no semgrep open-world registry fetch).
+        run: codescan all -p src --offline --json --summary-only --fail-on errors

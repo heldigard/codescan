@@ -27,6 +27,7 @@ codescan list           # verify sensors
 
 ```bash
 codescan list                          # show available sensors + versions
+codescan list --json                   # compact availability matrix for routers
 codescan capabilities                  # JSON metadata: safety, cost, external tools
 codescan dead -p src/                  # dead code detection
 codescan lint -p src/                  # Python lint checks
@@ -38,6 +39,7 @@ codescan all -p src/                   # run every sensor, summarize (parallel)
 codescan all -p src/ --json            # compact structured handoff for routers/workers
 codescan all -p src/ --jobs 1          # force sequential (debugging / single-core CI)
 codescan all -p src/ --skip sec,arch   # omit sensors from the run entirely
+codescan all -p src/ --offline         # skip open-world semgrep (or CODESCAN_OFFLINE=1)
 ```
 
 ### Parallelism
@@ -50,9 +52,13 @@ of all of them. Width is host-aware and bounded:
 - default: `min(6, cpu_count)` — leaves headroom for Ollama / desktop / agents
 - `CODESCAN_JOBS=N` env var, or `--jobs N` flag, overrides it
 - `--jobs 1` reproduces the exact pre-parallel sequential behavior
+- when both Python and JS/TS are present, dead-code sensors (vulture + knip)
+  also run in parallel inside the dead section
 
-Each sensor payload in `--json` output carries a `duration_ms` field so a
-router can see which sensor dominates.
+Each sensor payload in `--json` output carries a `duration_ms` field; the
+aggregate report adds top-level `wall_ms` and `jobs` so a router can see total
+cost and which sensor dominates. A crashing sensor becomes a typed `error`
+payload instead of aborting the whole pass.
 
 ### CI / router gates
 

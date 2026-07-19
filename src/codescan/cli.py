@@ -19,13 +19,37 @@ from codescan.shared.config import SENSORS
 from codescan.shared.runner import have, version_of
 
 
-def cmd_list(_args: argparse.Namespace) -> int:
-    """Show available sensors + versions."""
+def cmd_list(args: argparse.Namespace) -> int:
+    """Show available sensors + versions (text table or compact JSON)."""
+    rows = []
+    for tool in SENSORS:
+        available = have(tool)
+        rows.append(
+            {
+                "sensor": tool,
+                "version": version_of(tool) if available else None,
+                "available": available,
+            }
+        )
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "command": "list",
+                    "schema_version": 1,
+                    "sensors": rows,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        return 0
     print(f"{'sensor':<20} {'version':<22} available")
     print("-" * 50)
-    for tool in SENSORS:
-        avail = "yes" if have(tool) else "NO (install)"
-        print(f"{tool:<20} {version_of(tool):<22} {avail}")
+    for row in rows:
+        avail = "yes" if row["available"] else "NO (install)"
+        version = row["version"] or "?"
+        print(f"{row['sensor']:<20} {version:<22} {avail}")
     return 0
 
 
@@ -57,6 +81,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     list_parser = sub.add_parser("list", help="show available sensors + versions")
+    list_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit compact JSON (sensor name, version, available) for routers",
+    )
     list_parser.set_defaults(func=cmd_list)
 
     capabilities_parser = sub.add_parser(
@@ -161,7 +190,8 @@ def _build_parser() -> argparse.ArgumentParser:
     all_parser.add_argument(
         "--offline",
         action="store_true",
-        help="skip semgrep (the only open-world sensor); much faster, sandboxed",
+        help="skip semgrep (the only open-world sensor); much faster, sandboxed. "
+        "Also set by CODESCAN_OFFLINE=1 for sandboxed agents without flag plumbing",
     )
     all_parser.add_argument(
         "-j",
