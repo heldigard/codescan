@@ -18,6 +18,9 @@ best-in-class tools and prints normalized, token-friendly summaries.
 
 ## Install
 
+> **Ubuntu 26 / PEP 668:** system Python is externally managed. Prefer `uv tool install --force --editable ~/PROJECT` for PATH tools, or `python3 -m pip install --user --break-system-packages -e .` for user-site hooks. Or use a project venv.
+
+
 ```bash
 pip install -e .        # dev install
 codescan list           # verify sensors
