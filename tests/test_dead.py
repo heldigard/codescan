@@ -1,4 +1,5 @@
 """Tests: dead-code sensor (vulture delegation)."""
+
 from __future__ import annotations
 
 import json  # noqa: F401
@@ -33,7 +34,6 @@ def test_codescan_dead_detects(tmp_path: Path) -> None:
     assert ".venv" not in r.stdout, f"dead leaked .venv: {r.stdout}"
 
 
-
 def test_codescan_dead_no_substring_exclude_false_positive(tmp_path: Path) -> None:
     """Vendor excludes must segment-anchor, not substring-match.
 
@@ -55,12 +55,10 @@ def test_codescan_dead_no_substring_exclude_false_positive(tmp_path: Path) -> No
     )
 
 
-
 def test_archived_harness_code_is_not_quality_gate_input() -> None:
     from codescan.sensors.vulture_sensor import _vulture_excludes
 
     assert "*/_archive/*" in _vulture_excludes({})
-
 
 
 def test_codescan_dead_respects_vulture_pyproject(tmp_path: Path) -> None:
@@ -78,7 +76,6 @@ def test_codescan_dead_respects_vulture_pyproject(tmp_path: Path) -> None:
     assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
 
 
-
 def test_codescan_dead_ignores_pep562_module_hooks(tmp_path: Path) -> None:
     """PEP 562 module hooks are public protocol hooks, not dead functions."""
     (tmp_path / "app.py").write_text(
@@ -92,7 +89,6 @@ def test_codescan_dead_ignores_pep562_module_hooks(tmp_path: Path) -> None:
     assert "__getattr__" not in r.stdout, f"PEP 562 __getattr__ leaked: {r.stdout}"
     assert "__dir__" not in r.stdout, f"PEP 562 __dir__ leaked: {r.stdout}"
     assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
-
 
 
 def test_codescan_dead_ignores_parser_callbacks(tmp_path: Path) -> None:
@@ -134,7 +130,6 @@ def test_codescan_dead_ignores_parser_callbacks(tmp_path: Path) -> None:
     assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
 
 
-
 def test_codescan_dead_ignores_asyncio_protocol_callbacks(tmp_path: Path) -> None:
     """asyncio.Protocol/StreamingProtocol overrides are invoked by the loop by name.
 
@@ -169,7 +164,6 @@ def test_codescan_dead_ignores_asyncio_protocol_callbacks(tmp_path: Path) -> Non
     assert "ordinary_dead_func" in r.stdout, f"expected normal vulture finding: {r.stdout}"
 
 
-
 def test_codescan_dead_single_file(tmp_path: Path) -> None:
     """codescan dead must correctly detect languages and run on a single file path."""
     app_file = tmp_path / "app.py"
@@ -177,7 +171,6 @@ def test_codescan_dead_single_file(tmp_path: Path) -> None:
     r = run(_codescan("dead", "-p", str(app_file)), check=False)
     assert r.returncode == 0, f"dead on single file failed: stdout={r.stdout} stderr={r.stderr}"
     assert "ordinary_dead_func" in r.stdout, f"expected vulture finding: {r.stdout}"
-
 
 
 def test_codescan_dead_json_reports_sensor_payload(tmp_path: Path) -> None:
@@ -196,7 +189,6 @@ def test_codescan_dead_json_reports_sensor_payload(tmp_path: Path) -> None:
     )
 
 
-
 def test_codescan_dead_js_runs_knip_from_package_root(tmp_path: Path) -> None:
     """knip must execute from the package root even when -p points at src/."""
     bin_dir = tmp_path / "bin"
@@ -213,4 +205,3 @@ def test_codescan_dead_js_runs_knip_from_package_root(tmp_path: Path) -> None:
 
     assert r.returncode == 0, f"knip sensor failed: stdout={r.stdout} stderr={r.stderr}"
     assert f"warn cwd={project}" in r.stdout, f"knip did not run in package root: {r.stdout}"
-

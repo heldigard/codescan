@@ -239,12 +239,12 @@ def _accumulate(summary: dict[str, int], payload: dict[str, Any]) -> None:
     """Fold one sensor payload into the aggregate summary."""
     counts = payload.get("counts", {})
     command = payload.get("command")
-    summary["secrets"] += int(counts.get("leaks", 0) or 0)
+    # Guard on command: each counter folds only its own sensor's payload. A
+    # future sensor reusing a key (e.g. `leaks`) would misattribute otherwise.
+    if command == "secrets":
+        summary["secrets"] += int(counts.get("leaks", 0) or 0)
     if command == "sec":
         summary["sast_findings"] += int(counts.get("findings", 0) or 0)
-    # Guard on command == "dead": only dead payloads use the ``items`` key.
-    # Counting it unconditionally would misattribute if another sensor ever
-    # reused that key.
     if command == "dead":
         summary["dead_items"] += int(counts.get("items", 0) or 0)
     if command == "lint":

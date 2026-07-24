@@ -1,4 +1,5 @@
 """Tests: type sensor (pyright delegation)."""
+
 from __future__ import annotations
 
 import json  # noqa: F401
@@ -54,7 +55,6 @@ def test_codescan_type_json_pyright_is_compact(tmp_path: Path) -> None:
     ]
 
 
-
 def test_type_sensor_uses_scanned_project_as_working_directory(monkeypatch, tmp_path: Path) -> None:
     """Project-local pyright config/imports must not depend on caller cwd."""
     import codescan.sensors.type_sensor as sensor
@@ -72,7 +72,6 @@ def test_type_sensor_uses_scanned_project_as_working_directory(monkeypatch, tmp_
     assert rc == 0
     assert payload["counts"]["diagnostics"] == 0
     assert captured["cwd"] == tmp_path
-
 
 
 def test_type_sensor_honors_project_pyright_scope(monkeypatch, tmp_path: Path) -> None:
@@ -102,7 +101,6 @@ def test_type_sensor_honors_project_pyright_scope(monkeypatch, tmp_path: Path) -
     assert captured["cwd"] == tmp_path
 
 
-
 def test_codescan_type_resolves_relative_subdir(tmp_path: Path) -> None:
     """Relative -p dir must not double-resolve against its own cwd.
 
@@ -122,4 +120,3 @@ def test_codescan_type_resolves_relative_subdir(tmp_path: Path) -> None:
     assert r.returncode == 0, f"type rel failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
     assert payload["status"] != "error", f"relative path doubled: {payload}"
-

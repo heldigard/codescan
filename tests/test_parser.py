@@ -1,4 +1,5 @@
 """Tests: argument parser surface. Extracted from the former monolithic test_codescan.py."""
+
 from __future__ import annotations
 
 import json  # noqa: F401
@@ -24,7 +25,6 @@ def test_all_parser_has_sensor_options() -> None:
     assert args.fail_on == "never"
 
 
-
 def test_all_parser_has_jobs_option() -> None:
     """--jobs bounds parallel width; default None lets the host-aware value apply."""
     from codescan.cli import _build_parser
@@ -35,4 +35,3 @@ def test_all_parser_has_jobs_option() -> None:
     assert pinned.jobs == 1
     short = _build_parser().parse_args(["all", "-j", "3"])
     assert short.jobs == 3
-

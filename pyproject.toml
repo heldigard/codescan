@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codescan-cli"
-version = "1.2.1"
+version = "1.2.2"
 description = "Code-quality sensor orchestrator for LLM coding agents."
 readme = "README.md"
 requires-python = ">=3.11"

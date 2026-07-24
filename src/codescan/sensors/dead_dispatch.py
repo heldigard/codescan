@@ -34,6 +34,35 @@ def run_dead_sensors(path: Path, langs: set[str], min_confidence: int | None) ->
     return 0
 
 
+def _isolate_dead(
+    produce: Callable[[], tuple[int, dict[str, Any], str]], tool: str, path: Path
+) -> tuple[int, dict[str, Any], str]:
+    """Run a dead-sensor producer, converting an unexpected exception to a typed error.
+
+    Mirrors the ``all`` orchestrator's crash-isolation contract (see
+    ``all_command._run_section``): one broken sensor degrades to a typed
+    ``error`` payload instead of aborting the whole ``dead --json`` handoff.
+    """
+    try:
+        return produce()
+    except Exception as exc:  # noqa: BLE001 — sensor boundary; degrade, don't crash
+        language = "python" if tool == "vulture" else "javascript-typescript"
+        payload: dict[str, Any] = {
+            "command": "dead",
+            "schema_version": 1,
+            "tool": tool,
+            "language": language,
+            "path": str(path),
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "counts": {"items": 0},
+            "findings": [],
+            "findings_omitted": True,
+            "truncated": False,
+        }
+        return 2, payload, payload["error"]
+
+
 def dead_results(
     path: Path,
     langs: set[str],
@@ -50,6 +79,8 @@ def dead_results(
 
     When both ecosystems are present, vulture and knip run in parallel (native
     multi-core host): they are independent subprocesses with no shared state.
+    Each producer is wrapped in :func:`_isolate_dead` so a crashing sensor
+    yields a typed error payload rather than aborting the whole run.
     """
     from codescan.sensors.knip_sensor import dead_js_payload
     from codescan.sensors.vulture_sensor import dead_py_payload
@@ -58,10 +89,18 @@ def dead_results(
     producers: list[Callable[[], tuple[int, dict[str, Any], str]]] = []
     if "py" in langs:
         producers.append(
-            lambda: dead_py_payload(path, min_confidence, include_findings=include_findings)
+            lambda: _isolate_dead(
+                lambda: dead_py_payload(path, min_confidence, include_findings=include_findings),
+                "vulture",
+                path,
+            )
         )
     if "js" in langs or "ts" in langs:
-        producers.append(lambda: dead_js_payload(path, include_findings=include_findings))
+        producers.append(
+            lambda: _isolate_dead(
+                lambda: dead_js_payload(path, include_findings=include_findings), "knip", path
+            )
+        )
     if not producers:
         return []
     if len(producers) == 1:

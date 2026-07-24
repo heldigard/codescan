@@ -1,4 +1,5 @@
 """Tests: vendor-exclusion parity. Extracted from the former monolithic test_codescan.py."""
+
 from __future__ import annotations
 
 import json  # noqa: F401
@@ -52,7 +53,6 @@ def test_vendor_excludes_cover_agent_and_mcp_noise() -> None:
         assert token in SCAN_EXCLUDES, token
 
 
-
 def test_vendor_excludes_parity_with_colocated_codeq() -> None:
     """When ~/codeq is present, codescan vendor tokens must be ⊆ codeq's list.
 
@@ -90,4 +90,3 @@ def test_vendor_excludes_parity_with_colocated_codeq() -> None:
         elif token not in codeq_vendor:
             extras.add(token)
     assert not extras, f"codescan VENDOR_EXCLUDES not in codeq (add to both): {sorted(extras)}"
-

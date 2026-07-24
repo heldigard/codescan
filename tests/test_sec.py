@@ -1,4 +1,5 @@
 """Tests: sec sensor (semgrep delegation). Extracted from the former monolithic test_codescan.py."""
+
 from __future__ import annotations
 
 import json  # noqa: F401
@@ -45,4 +46,3 @@ def test_codescan_sec_json_is_compact(tmp_path: Path) -> None:
         }
     ]
     assert payload["findings_omitted"] is False
-

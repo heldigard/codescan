@@ -1,4 +1,5 @@
 """Tests: arch sensor + --init. Extracted from the former monolithic test_codescan.py."""
+
 from __future__ import annotations
 
 import json  # noqa: F401
@@ -30,7 +31,6 @@ def test_codescan_arch_json_skips_without_config(tmp_path: Path) -> None:
     assert payload["counts"]["violations"] == 0
 
 
-
 def test_codescan_arch_skips_without_config(tmp_path: Path) -> None:
     """dependency-cruiser must SKIP cleanly (exit 1, not crash) when the project
     has no .dependency-cruiser.cjs — never auto-generate one."""
@@ -44,7 +44,6 @@ def test_codescan_arch_skips_without_config(tmp_path: Path) -> None:
     r = run(_codescan("arch", "-p", str(tmp_path)), check=False, env=env)
     assert r.returncode == 1, f"arch should exit 1 without config, got {r.returncode}"
     assert "no .dependency-cruiser" in r.stderr.lower(), f"arch should explain the skip: {r.stderr}"
-
 
 
 def test_codescan_arch_uses_js_config_and_project_root(tmp_path: Path) -> None:
@@ -66,7 +65,6 @@ def test_codescan_arch_uses_js_config_and_project_root(tmp_path: Path) -> None:
     assert ".dependency-cruiser.js" in r.stdout, f"arch did not pass JS config: {r.stdout}"
 
 
-
 def test_codescan_arch_init_creates_starter(tmp_path: Path) -> None:
     """codescan arch --init writes a starter config; second call refuses to overwrite."""
     r1 = run(_codescan("arch", "--init", "-p", str(tmp_path)), check=False)
@@ -82,4 +80,3 @@ def test_codescan_arch_init_creates_starter(tmp_path: Path) -> None:
     r2 = run(_codescan("arch", "--init", "-p", str(tmp_path)), check=False)
     assert r2.returncode == 1, "second --init must refuse to overwrite"
     assert "exists, not overwritten" in r2.stderr, r2.stderr
-

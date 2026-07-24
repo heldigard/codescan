@@ -45,6 +45,15 @@ codescan all -p src/ --skip sec,arch   # omit sensors from the run entirely
 codescan all -p src/ --offline         # skip open-world semgrep (or CODESCAN_OFFLINE=1)
 ```
 
+### Environment variables
+
+| Variable | Effect | Default |
+|----------|--------|---------|
+| `CODESCAN_JOBS` | Max sensors to run in parallel (0/1 → serial) | `min(6, cores)` |
+| `CODESCAN_OFFLINE` | `1`/`true` → skip semgrep (same as `--offline`) | unset |
+| `CODESCAN_BIN_TIMEOUT` | Seconds to wait for each sensor binary before timing out | 180.0 |
+
+
 ### Parallelism
 
 `codescan all` runs sensors concurrently — they are independent subprocess

@@ -1,4 +1,5 @@
 """Tests: secrets sensor (gitleaks delegation)."""
+
 from __future__ import annotations
 
 import json  # noqa: F401
@@ -40,7 +41,6 @@ def test_codescan_secrets_excludes_cache_dirs(tmp_path: Path) -> None:
     assert "__pycache__" not in r.stdout, r.stdout
 
 
-
 def test_codescan_secrets_json_is_compact_and_redacted(tmp_path: Path) -> None:
     """JSON mode gives routers typed findings without exposing secret payloads."""
     bin_dir = tmp_path / "bin"
@@ -65,7 +65,6 @@ def test_codescan_secrets_json_is_compact_and_redacted(tmp_path: Path) -> None:
     assert payload["findings"] == [{"rule_id": "generic-api-key", "file": "app.py", "line": 7}]
 
 
-
 def test_codescan_secrets_error_when_gitleaks_signals_leaks_unparseable(tmp_path: Path) -> None:
     """gitleaks exit 1 means leaks found. If the report did not parse, codescan
     must surface an error rather than report a silent clean 0 leaks
@@ -84,7 +83,6 @@ def test_codescan_secrets_error_when_gitleaks_signals_leaks_unparseable(tmp_path
     payload = json.loads(r.stdout)
     assert payload["status"] == "error"
     assert payload["counts"]["leaks"] == 0
-
 
 
 def test_gitleaks_allowlist_drops_tmp_temp_collision() -> None:
@@ -112,7 +110,6 @@ def test_gitleaks_allowlist_drops_tmp_temp_collision() -> None:
     )
 
 
-
 def test_codescan_secrets_detects_leak_under_tmp(tmp_path: Path) -> None:
     """End-to-end regression: a real secret under /tmp (pytest tmp_path) must be
     detected. Before the allowlist fix, the tmp/temp token blanked the whole
@@ -131,4 +128,3 @@ def test_codescan_secrets_detects_leak_under_tmp(tmp_path: Path) -> None:
     assert r.returncode == 0, f"secrets failed: stdout={r.stdout} stderr={r.stderr}"
     payload = json.loads(r.stdout)
     assert payload["counts"]["leaks"] >= 1, f"secret under /tmp missed: {r.stdout}"
-

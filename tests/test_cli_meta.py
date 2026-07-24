@@ -1,4 +1,5 @@
 """Tests: codescan CLI meta (list/version/capabilities)."""
+
 from __future__ import annotations
 
 import json  # noqa: F401
@@ -18,7 +19,6 @@ def test_codescan_list() -> None:
     assert "available" in r.stdout, f"codescan list malformed: {r.stdout}"
 
 
-
 def test_codescan_list_json() -> None:
     """list --json is a compact router handoff (sensor availability matrix)."""
     r = run(_codescan("list", "--json"))
@@ -32,13 +32,11 @@ def test_codescan_list_json() -> None:
     assert r.stdout.count("\n") == 1, "list --json stays single-line compact"
 
 
-
 def test_codescan_version() -> None:
     from codescan import __version__
 
     r = run(_codescan("--version"))
     assert r.stdout.strip() == f"codescan {__version__}", r.stdout
-
 
 
 def test_codescan_capabilities_contract() -> None:
@@ -63,4 +61,3 @@ def test_codescan_capabilities_contract() -> None:
     assert by_name["all"]["open_world"] is True
     assert by_name["all"]["ci_exit_policies"] == ["never", "errors", "findings"]
     assert r.stdout.count("\n") == 1, "router manifest stays compact"
-

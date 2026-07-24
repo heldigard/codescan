@@ -1,4 +1,5 @@
 """Tests: lint sensor delegation. Extracted from the former monolithic test_codescan.py."""
+
 from __future__ import annotations
 
 import json  # noqa: F401
@@ -43,4 +44,3 @@ def test_codescan_lint_json_is_compact(tmp_path: Path) -> None:
             "message": "imported but unused",
         }
     ]
-

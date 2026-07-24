@@ -4,6 +4,7 @@
 `python tests/test_codescan.py` workflow working after the slice split by
 importing the same test functions from their new modules.
 """
+
 from __future__ import annotations
 
 import tempfile

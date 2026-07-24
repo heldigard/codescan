@@ -23,22 +23,33 @@ def _finding_payload(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _semgrep_command(path_s: str, cfg: str) -> list[str]:
+    """Build the semgrep invocation (vendor excludes + telemetry off).
+
+    ``--metrics off`` stops the pseudonymous usage-metrics ping semgrep sends
+    whenever ``--config`` pulls from the registry (its ``auto`` default). For a
+    sandbox-oriented agent sensor the network/telemetry-free default is the
+    right one; ``--disable-version-check`` already drops the update probe.
+    """
+    exclude_args = [item for token in SCAN_EXCLUDES for item in ("--exclude", f"**/{token}/**")]
+    return [
+        "semgrep",
+        "scan",
+        "--config",
+        cfg,
+        "--json",
+        "--quiet",
+        "--disable-version-check",
+        "--metrics",
+        "off",
+        *exclude_args,
+        path_s,
+    ]
+
+
 def _run_semgrep(path_s: str, cfg: str) -> tuple[int, str, str]:
     """Run semgrep with the vendor-exclude flags, return (rc, stdout, stderr)."""
-    exclude_args = [item for token in SCAN_EXCLUDES for item in ("--exclude", f"**/{token}/**")]
-    return run(
-        [
-            "semgrep",
-            "scan",
-            "--config",
-            cfg,
-            "--json",
-            "--quiet",
-            "--disable-version-check",
-            *exclude_args,
-            path_s,
-        ]
-    )
+    return run(_semgrep_command(path_s, cfg))
 
 
 def sec_payload(

@@ -1,4 +1,5 @@
 """Tests: `all` aggregator + parallelism. Extracted from the former monolithic test_codescan.py."""
+
 from __future__ import annotations
 
 import json  # noqa: F401
@@ -33,7 +34,6 @@ def test_parallel_map_preserves_order_and_serial_fallback() -> None:
     assert parallel_map(slow, [99], jobs=4) == [990]
 
 
-
 def test_default_jobs_env_override(monkeypatch) -> None:
     """CODESCAN_JOBS overrides the host-aware default; 1 forces serial."""
     from codescan.shared.concurrency import default_jobs
@@ -46,7 +46,6 @@ def test_default_jobs_env_override(monkeypatch) -> None:
     monkeypatch.setenv("CODESCAN_JOBS", "garbage")
     # Malformed env falls through to the host-aware default (>= 1).
     assert default_jobs() >= 1
-
 
 
 def test_codescan_all_json_reports_jobs_and_duration(tmp_path: Path) -> None:
@@ -81,7 +80,6 @@ def test_codescan_all_json_reports_jobs_and_duration(tmp_path: Path) -> None:
         assert sensor["duration_ms"] >= 0, sensor
 
 
-
 def test_codescan_all_isolates_sensor_exceptions(tmp_path: Path) -> None:
     """A crashing sensor becomes a typed error payload (does not abort the pool)."""
     from codescan.sensors import all_command
@@ -104,7 +102,6 @@ def test_codescan_all_isolates_sensor_exceptions(tmp_path: Path) -> None:
     assert summary["errors"] == 1
 
 
-
 def test_codescan_all_offline_env(tmp_path: Path) -> None:
     """CODESCAN_OFFLINE=1 skips semgrep the same way as --offline."""
     (tmp_path / "app.py").write_text("x = 1\n")
@@ -120,7 +117,6 @@ def test_codescan_all_offline_env(tmp_path: Path) -> None:
     assert payload["offline"] is True
     sec = next(s for s in payload["sensors"] if s.get("command") == "sec")
     assert sec["status"] == "skipped"
-
 
 
 def test_codescan_all_parallel_matches_serial_summary(tmp_path: Path) -> None:
@@ -163,7 +159,6 @@ def test_codescan_all_parallel_matches_serial_summary(tmp_path: Path) -> None:
     assert serial_summary == parallel_summary
 
 
-
 def test_codescan_all_skip_drops_named_sensors(tmp_path: Path) -> None:
     """--skip removes sensors from the run entirely (no payload, no section)."""
     bin_dir = tmp_path / "bin"
@@ -188,7 +183,6 @@ def test_codescan_all_skip_drops_named_sensors(tmp_path: Path) -> None:
     payload = json.loads(r.stdout)
     commands = {sensor["command"] for sensor in payload["sensors"]}
     assert commands == {"secrets", "dead", "lint", "type"}, commands
-
 
 
 def test_codescan_all_skip_warns_on_unknown_name(tmp_path: Path) -> None:
@@ -216,7 +210,6 @@ def test_codescan_all_skip_warns_on_unknown_name(tmp_path: Path) -> None:
     assert "bogus" in r.stderr, f"missing unknown-name warning: {r.stderr}"
     payload = json.loads(r.stdout)
     assert "sec" not in {s["command"] for s in payload["sensors"]}
-
 
 
 def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
@@ -287,7 +280,6 @@ def test_codescan_all_json_aggregates_sensor_payloads(tmp_path: Path) -> None:
     assert json.loads(gated.stdout)["status"] == "findings"
 
 
-
 def test_codescan_all_fail_on_requires_json(tmp_path: Path) -> None:
     r = run(
         _codescan("all", "-p", str(tmp_path), "--fail-on", "errors"),
@@ -295,7 +287,6 @@ def test_codescan_all_fail_on_requires_json(tmp_path: Path) -> None:
     )
     assert r.returncode == 2
     assert "requires --json" in r.stderr
-
 
 
 def test_codescan_all_fail_on_errors_distinguishes_sensor_failure(tmp_path: Path) -> None:
@@ -333,7 +324,6 @@ def test_codescan_all_fail_on_errors_distinguishes_sensor_failure(tmp_path: Path
     assert payload["summary"]["errors"] == 1
 
 
-
 def test_codescan_all_offline_skips_semgrep(tmp_path: Path) -> None:
     """codescan all --offline --json must skip sec and emit a 'skipped' payload for it."""
     (tmp_path / "pyproject.toml").write_text("[project]\nname='s'\nversion='0'\n")
@@ -349,4 +339,3 @@ def test_codescan_all_offline_skips_semgrep(tmp_path: Path) -> None:
     assert sec["status"] == "skipped", sec
     assert "open-world" in sec.get("reason", ""), sec
     assert payload["summary"]["sast_findings"] == 0
-
