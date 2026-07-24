@@ -15,9 +15,10 @@ external sensor processes instead of test runners.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from os import cpu_count, environ
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 T = TypeVar("T")
 R = TypeVar("R")

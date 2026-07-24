@@ -48,7 +48,7 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codescan"]

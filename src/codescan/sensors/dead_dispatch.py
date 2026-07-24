@@ -9,8 +9,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 def run_dead_sensors(path: Path, langs: set[str], min_confidence: int | None) -> int:

@@ -18,8 +18,9 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from codescan.sensors.dead_dispatch import dead_results
 from codescan.shared.concurrency import default_jobs, parallel_map
@@ -422,7 +423,7 @@ def _emit_text(
         print("(offline mode: skipping semgrep — the only open-world sensor)\n")
     else:
         print()
-    for section, results in zip(sections, per_section):
+    for section, results in zip(sections, per_section, strict=False):
         print(f"\n----- {section['label']} -----")
         try:
             _render_section(section["key"], results, args)
